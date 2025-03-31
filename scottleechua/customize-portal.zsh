@@ -2,13 +2,13 @@
 
 # Check if all required arguments are provided
 if [ "$#" -ne 3 ]; then
-    echo "Usage: $0 <full_name> <email> <repo_name>"
+    echo "Usage: $0 <full_name> <email> <path_to_theme>"
     exit 1
 fi
 
 FULL_NAME=$1
 EMAIL=$2
-REPO_NAME=$3
+THEME_PATH=$3
 
 # Get the absolute path of the Ghost root directory
 if [ -f "$0" ]; then
@@ -52,10 +52,10 @@ echo "Build started..."
 echo "Build completed."
 
 # Copy portal.min.js to specified repo directory
-cp "$GHOST_ROOT/apps/portal/umd/portal.min.js" "$HOME/$REPO_NAME/"
-echo "$PORTAL_VERSION" > "$HOME/$REPO_NAME/PORTAL-VERSION"
+cp "$GHOST_ROOT/apps/portal/umd/portal.min.js" "$HOME/$THEME_PATH/"
+echo "$PORTAL_VERSION" > "$HOME/$THEME_PATH/PORTAL-VERSION"
 
-echo "Copied to $REPO_NAME/portal.min.js."
+echo "Copied to $THEME_PATH/portal.min.js."
 
 echo "Cleaning up changes..."
 
