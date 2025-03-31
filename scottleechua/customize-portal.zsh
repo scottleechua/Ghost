@@ -43,6 +43,7 @@ fi
 
 # Get Portal version
 PORTAL_VERSION=$(jq -r '.version' "$GHOST_ROOT/apps/portal/package.json")
+echo "=== Customize Portal ==="
 echo "Portal version: $PORTAL_VERSION"
 
 # Replace name placeholder in all files
@@ -106,3 +107,4 @@ if [ "$HIDE_ALREADY_MEMBER" = true ]; then
 fi
 
 echo "Done!"
+echo ""

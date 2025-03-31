@@ -43,6 +43,7 @@ fi
 
 # Get Sodosearch version
 SODOSEARCH_VERSION=$(jq -r '.version' "$GHOST_ROOT/apps/sodo-search/package.json")
+echo "=== Customize Sodosearch ==="
 echo "Sodosearch version: $SODOSEARCH_VERSION"
 
 # Replace search placeholder in PopupModal.js if provided
