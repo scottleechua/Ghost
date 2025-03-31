@@ -1,8 +1,8 @@
 # Ghost customizations
 
 Contains:
-- `customize-portal.zsh` - generate `portal.min.js` with custom placeholders.
-- `generate-sodosearch.zsh` - generate `sodo-search.min.js` and `sodo-search-main.css` for local use.
+- `customize-portal.zsh`
+- `customize-sodosearch.zsh`
 
 ## Local Dev Setup
 Last worked on a Mac (Apple Silicon) with Node v18.10.2 and Yarn 4.8.1. Yarn 1.22.22 was installed globally.
@@ -14,7 +14,7 @@ yarn setup
 
 cd scottleechua
 chmod +x customize-portal.zsh
-chmod +x generate-sodosearch.zsh
+chmod +x customize-sodosearch.zsh
 ```
 
 ## Customize Portal
@@ -36,22 +36,48 @@ The script can be run from any directory by using its full path:
 /Ghost/scottleechua/customize-portal.zsh "Full Name" "example@email.com" "repo/theme"
 ```
 
-## Generate SodoSearch
+### Note
+To hide the "Don't have an account? Sign up
+```css
+.gh-portal-signup-message {
+    display: none !important;
+}
+```
+
+## Customize SodoSearch
 
 ```bash
-./generate-sodosearch.zsh "repo/theme"
+./customize-sodosearch.zsh [--placeholder-string <string>] [--placeholder-color <hexcode>] [--placeholder-font <list of fonts>] <path/to/theme>
 ```
 
 This script will:
-1. Build SodoSearch
-2. Copy the built `sodo-search.min.js` to your theme directory
-3. Copy and rename `main.css` to `sodo-search-main.css` in your theme directory
-4. Create or update a `SODOSEARCH-VERSION` file with the current SodoSearch version
+1. Replace the searchbar placeholder text (if `--placeholder-string` is provided)
+2. Apply custom styles to the placeholder text (if `--placeholder-color` and/or `--placeholder-font` are provided)
+3. Build SodoSearch
+4. Copy the built `sodo-search.min.js` to your theme directory
+5. Copy and rename `main.css` to `sodo-search-main.css` to your theme directory
+6. Create or update a `SODOSEARCH-VERSION` file with the current SodoSearch version
+7. Restore the original search placeholder text and styles
+
+Examples:
+```bash
+# Basic usage (only theme path required)
+./customize-sodosearch.zsh "path/to/theme"
+
+# With custom placeholder text
+./customize-sodosearch.zsh --placeholder-string "Search..." "path/to/theme"
+
+# With custom placeholder text and color
+./customize-sodosearch.zsh --placeholder-string "Search..." --placeholder-color "#6B7280" "path/to/theme"
+
+# With all customization options
+./customize-sodosearch.zsh --placeholder-string "Search..." --placeholder-color "#6B7280" --placeholder-font "'Arial, sans-serif'" "path/to/theme"
+```
 
 The script can be run from any directory by using its full path:
 
 ```bash
-/Ghost/scottleechua/generate-sodosearch.zsh "repo/theme"
+/Ghost/scottleechua/customize-sodosearch.zsh "path/to/theme"
 ```
 
 ## Guidelines
