@@ -1,14 +1,30 @@
 #!/bin/zsh
 
+# Parse command line arguments
+PLACEHOLDER_NAME=""
+PLACEHOLDER_EMAIL=""
+HIDE_ALREADY_MEMBER=false
+
+while [[ "$#" -gt 0 ]]; do
+    case $1 in
+        --placeholder-name) PLACEHOLDER_NAME="$2"; shift ;;
+        --placeholder-email) PLACEHOLDER_EMAIL="$2"; shift ;;
+        --hide-already-member) HIDE_ALREADY_MEMBER=true ;;
+        *) break ;;
+    esac
+    shift
+done
+
 # Check if all required arguments are provided
-if [ "$#" -ne 3 ]; then
-    echo "Usage: $0 <full_name> <email> <path_to_theme>"
+if [ "$#" -ne 1 ]; then
+    echo "Usage: $0 [--placeholder-name <name>] [--placeholder-email <email>] [--hide-already-member] <path_to_theme>"
+    echo "  --placeholder-name    Set placeholder name (e.g., 'John Doe')"
+    echo "  --placeholder-email   Set placeholder email (e.g., 'john@example.com')"
+    echo "  --hide-already-member  Hide the 'Already a member?' message"
     exit 1
 fi
 
-FULL_NAME=$1
-EMAIL=$2
-THEME_PATH=$3
+THEME_PATH=$1
 
 # Get the absolute path of the Ghost root directory
 if [ -f "$0" ]; then
@@ -29,20 +45,29 @@ fi
 PORTAL_VERSION=$(jq -r '.version' "$GHOST_ROOT/apps/portal/package.json")
 echo "Portal version: $PORTAL_VERSION"
 
-# Replace placeholders in AccountProfilePage.js
-sed -i '' "s/Jamie Larson/$FULL_NAME/g" "$GHOST_ROOT/apps/portal/src/components/pages/AccountProfilePage.js"
-sed -i '' "s/jamie@example.com/$EMAIL/g" "$GHOST_ROOT/apps/portal/src/components/pages/AccountProfilePage.js"
+# Replace name placeholder in all files
+if [ ! -z "$PLACEHOLDER_NAME" ]; then
+    sed -i '' "s/Jamie Larson/$PLACEHOLDER_NAME/g" "$GHOST_ROOT/apps/portal/src/components/pages/AccountProfilePage.js"
+    sed -i '' "s/Jamie Larson/$PLACEHOLDER_NAME/g" "$GHOST_ROOT/apps/portal/src/components/pages/OfferPage.js"
+    sed -i '' "s/Jamie Larson/$PLACEHOLDER_NAME/g" "$GHOST_ROOT/apps/portal/src/components/pages/SignupPage.js"
+fi
 
-# Replace placeholders in OfferPage.js
-sed -i '' "s/Jamie Larson/$FULL_NAME/g" "$GHOST_ROOT/apps/portal/src/components/pages/OfferPage.js"
-sed -i '' "s/jamie@example.com/$EMAIL/g" "$GHOST_ROOT/apps/portal/src/components/pages/OfferPage.js"
+# Replace email placeholder in all files
+if [ ! -z "$PLACEHOLDER_EMAIL" ]; then
+    sed -i '' "s/jamie@example.com/$PLACEHOLDER_EMAIL/g" "$GHOST_ROOT/apps/portal/src/components/pages/AccountProfilePage.js"
+    sed -i '' "s/jamie@example.com/$PLACEHOLDER_EMAIL/g" "$GHOST_ROOT/apps/portal/src/components/pages/OfferPage.js"
+    sed -i '' "s/jamie@example.com/$PLACEHOLDER_EMAIL/g" "$GHOST_ROOT/apps/portal/src/components/pages/SignupPage.js"
+    sed -i '' "s/jamie@example.com/$PLACEHOLDER_EMAIL/g" "$GHOST_ROOT/apps/portal/src/components/pages/SigninPage.js"
+fi
 
-# Replace placeholders in SignupPage.js
-sed -i '' "s/Jamie Larson/$FULL_NAME/g" "$GHOST_ROOT/apps/portal/src/components/pages/SignupPage.js"
-sed -i '' "s/jamie@example.com/$EMAIL/g" "$GHOST_ROOT/apps/portal/src/components/pages/SignupPage.js"
-
-# Replace placeholders in SigninPage.js
-sed -i '' "s/jamie@example.com/$EMAIL/g" "$GHOST_ROOT/apps/portal/src/components/pages/SigninPage.js"
+# Hide already a member message if flag is set
+if [ "$HIDE_ALREADY_MEMBER" = true ]; then
+    # Capture the original display rule
+    ORIGINAL_DISPLAY=$(grep -A 1 '\.gh-portal-signup-message {' "$GHOST_ROOT/apps/portal/src/components/pages/SignupPage.js" | grep 'display:' | sed 's/.*display: \([^;]*\);.*/\1/')
+    
+    # Modify the CSS rule in SignupPage.js
+    sed -i '' "/\.gh-portal-signup-message {/,/}/s/display: $ORIGINAL_DISPLAY;/display: none !important;/g" "$GHOST_ROOT/apps/portal/src/components/pages/SignupPage.js"
+fi
 
 echo "Build started..."
 
@@ -53,25 +78,31 @@ echo "Build completed."
 
 # Copy portal.min.js to specified repo directory
 cp "$GHOST_ROOT/apps/portal/umd/portal.min.js" "$HOME/$THEME_PATH/"
-echo "$PORTAL_VERSION" > "$HOME/$THEME_PATH/PORTAL-VERSION"
-
 echo "Copied to $THEME_PATH/portal.min.js."
+
+echo "$PORTAL_VERSION" > "$HOME/$THEME_PATH/PORTAL-VERSION"
+echo "Bumped $THEME_PATH/PORTAL-VERSION to $PORTAL_VERSION"
 
 echo "Cleaning up changes..."
 
-# Restore original placeholders in AccountProfilePage.js
-sed -i '' "s/$FULL_NAME/Jamie Larson/g" "$GHOST_ROOT/apps/portal/src/components/pages/AccountProfilePage.js"
-sed -i '' "s/$EMAIL/jamie@example.com/g" "$GHOST_ROOT/apps/portal/src/components/pages/AccountProfilePage.js"
+# Restore name placeholder in all files
+if [ ! -z "$PLACEHOLDER_NAME" ]; then
+    sed -i '' "s/$PLACEHOLDER_NAME/Jamie Larson/g" "$GHOST_ROOT/apps/portal/src/components/pages/AccountProfilePage.js"
+    sed -i '' "s/$PLACEHOLDER_NAME/Jamie Larson/g" "$GHOST_ROOT/apps/portal/src/components/pages/OfferPage.js"
+    sed -i '' "s/$PLACEHOLDER_NAME/Jamie Larson/g" "$GHOST_ROOT/apps/portal/src/components/pages/SignupPage.js"
+fi
 
-# Restore original placeholders in OfferPage.js
-sed -i '' "s/$FULL_NAME/Jamie Larson/g" "$GHOST_ROOT/apps/portal/src/components/pages/OfferPage.js"
-sed -i '' "s/$EMAIL/jamie@example.com/g" "$GHOST_ROOT/apps/portal/src/components/pages/OfferPage.js"
+# Restore email placeholder in all files
+if [ ! -z "$PLACEHOLDER_EMAIL" ]; then
+    sed -i '' "s/$PLACEHOLDER_EMAIL/jamie@example.com/g" "$GHOST_ROOT/apps/portal/src/components/pages/AccountProfilePage.js"
+    sed -i '' "s/$PLACEHOLDER_EMAIL/jamie@example.com/g" "$GHOST_ROOT/apps/portal/src/components/pages/OfferPage.js"
+    sed -i '' "s/$PLACEHOLDER_EMAIL/jamie@example.com/g" "$GHOST_ROOT/apps/portal/src/components/pages/SignupPage.js"
+    sed -i '' "s/$PLACEHOLDER_EMAIL/jamie@example.com/g" "$GHOST_ROOT/apps/portal/src/components/pages/SigninPage.js"
+fi
 
-# Restore original placeholders in SignupPage.js
-sed -i '' "s/$FULL_NAME/Jamie Larson/g" "$GHOST_ROOT/apps/portal/src/components/pages/SignupPage.js"
-sed -i '' "s/$EMAIL/jamie@example.com/g" "$GHOST_ROOT/apps/portal/src/components/pages/SignupPage.js"
-
-# Restore original placeholders in SigninPage.js
-sed -i '' "s/$EMAIL/jamie@example.com/g" "$GHOST_ROOT/apps/portal/src/components/pages/SigninPage.js"
+# Restore CSS rule if flag was set
+if [ "$HIDE_ALREADY_MEMBER" = true ]; then
+    sed -i '' "/\.gh-portal-signup-message {/,/}/s/display: none !important;/display: $ORIGINAL_DISPLAY;/g" "$GHOST_ROOT/apps/portal/src/components/pages/SignupPage.js"
+fi
 
 echo "Done!"

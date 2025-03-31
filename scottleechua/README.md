@@ -20,28 +20,36 @@ chmod +x customize-sodosearch.zsh
 ## Customize Portal
 
 ```bash
-./customize-portal.zsh "Full Name" "example@email.com" "repo/theme"
+./customize-portal.zsh [--placeholder-name <full name>] [--placeholder-email <email>] [--hide-already-member] <path/to/theme>
 ```
 
 This script will:
-1. Replace placeholder text in Portal components with your information
-2. Build the Portal
-3. Copy the built `portal.min.js` to the specified theme directory
-4. Create or update a `PORTAL-VERSION` file with the current Portal version
-5. Restore the original placeholder text
+1. Replace placeholder text in Portal components with your information (if `--placeholder-name` and/or `--placeholder-email` are provided)
+2. Hide the "Already a member?" message (if `--hide-already-member` is provided)
+3. Build the Portal
+4. Copy the built `portal.min.js` to your theme directory
+5. Create or update a `PORTAL-VERSION` file with the current Portal version
+6. Restore the original placeholder text and styles
+
+Examples:
+```bash
+# Basic usage (only theme path required)
+./customize-portal.zsh "path/to/theme"
+
+# With custom name and email
+./customize-portal.zsh --placeholder-name "John Doe" --placeholder-email "john@example.com" "path/to/theme"
+
+# Hide the "Already a member?" message
+./customize-portal.zsh --hide-already-member "path/to/theme"
+
+# With all customization options
+./customize-portal.zsh --placeholder-name "John Doe" --placeholder-email "john@example.com" --hide-already-member "path/to/theme"
+```
 
 The script can be run from any directory by using its full path:
 
 ```bash
-/Ghost/scottleechua/customize-portal.zsh "Full Name" "example@email.com" "repo/theme"
-```
-
-### Note
-To hide the "Don't have an account? Sign up
-```css
-.gh-portal-signup-message {
-    display: none !important;
-}
+/Ghost/scottleechua/customize-portal.zsh "path/to/theme"
 ```
 
 ## Customize SodoSearch
