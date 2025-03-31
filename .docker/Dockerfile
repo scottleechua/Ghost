@@ -89,7 +89,6 @@ COPY ghost/express-dynamic-redirects/package.json ghost/express-dynamic-redirect
 COPY ghost/ghost/package.json ghost/ghost/package.json
 COPY ghost/html-to-plaintext/package.json ghost/html-to-plaintext/package.json
 COPY ghost/i18n/package.json ghost/i18n/package.json
-COPY ghost/importer-handler-content-files/package.json ghost/importer-handler-content-files/package.json
 COPY ghost/in-memory-repository/package.json ghost/in-memory-repository/package.json
 COPY ghost/job-manager/package.json ghost/job-manager/package.json
 COPY ghost/link-redirects/package.json ghost/link-redirects/package.json
@@ -103,7 +102,6 @@ COPY ghost/members-csv/package.json ghost/members-csv/package.json
 COPY ghost/milestones/package.json ghost/milestones/package.json
 COPY ghost/minifier/package.json ghost/minifier/package.json
 COPY ghost/mw-error-handler/package.json ghost/mw-error-handler/package.json
-COPY ghost/mw-version-match/package.json ghost/mw-version-match/package.json
 COPY ghost/mw-vhost/package.json ghost/mw-vhost/package.json
 COPY ghost/offers/package.json ghost/offers/package.json
 COPY ghost/payments/package.json ghost/payments/package.json

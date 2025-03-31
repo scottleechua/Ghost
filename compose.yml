@@ -35,7 +35,6 @@ services:
       - node_modules_ghost_adapter-cache-redis:/home/ghost/ghost/adapter-cache-redis/node_modules:delegated
       - node_modules_ghost_adapter-manager:/home/ghost/ghost/adapter-manager/node_modules:delegated
       - node_modules_ghost_admin:/home/ghost/ghost/admin/node_modules:delegated
-      - node_modules_ghost_announcement-bar-settings:/home/ghost/ghost/announcement-bar-settings/node_modules:delegated
       - node_modules_ghost_api-framework:/home/ghost/ghost/api-framework/node_modules:delegated
       - node_modules_ghost_constants:/home/ghost/ghost/constants/node_modules:delegated
       - node_modules_ghost_core:/home/ghost/ghost/core/node_modules:delegated
@@ -53,7 +52,6 @@ services:
       - node_modules_ghost_ghost:/home/ghost/ghost/ghost/node_modules:delegated
       - node_modules_ghost_html-to-plaintext:/home/ghost/ghost/html-to-plaintext/node_modules:delegated
       - node_modules_ghost_i18n:/home/ghost/ghost/i18n/node_modules:delegated
-      - node_modules_ghost_importer-handler-content-files:/home/ghost/ghost/importer-handler-content-files/node_modules:delegated
       - node_modules_ghost_in-memory-repository:/home/ghost/ghost/in-memory-repository/node_modules:delegated
       - node_modules_ghost_job-manager:/home/ghost/ghost/job-manager/node_modules:delegated
       - node_modules_ghost_link-redirects:/home/ghost/ghost/link-redirects/node_modules:delegated
@@ -69,7 +67,6 @@ services:
       - node_modules_ghost_minifier:/home/ghost/ghost/minifier/node_modules:delegated
       - node_modules_ghost_model-to-domain-event-interceptor:/home/ghost/ghost/model-to-domain-event-interceptor/node_modules:delegated
       - node_modules_ghost_mw-error-handler:/home/ghost/ghost/mw-error-handler/node_modules:delegated
-      - node_modules_ghost_mw-version-match:/home/ghost/ghost/mw-version-match/node_modules:delegated
       - node_modules_ghost_mw-vhost:/home/ghost/ghost/mw-vhost/node_modules:delegated
       - node_modules_ghost_nql-filter-expansions:/home/ghost/ghost/nql-filter-expansions/node_modules:delegated
       - node_modules_ghost_offers:/home/ghost/ghost/offers/node_modules:delegated
@@ -179,7 +176,6 @@ volumes:
   node_modules_ghost_adapter-cache-redis: {}
   node_modules_ghost_adapter-manager: {}
   node_modules_ghost_admin: {}
-  node_modules_ghost_announcement-bar-settings: {}
   node_modules_ghost_api-framework: {}
   node_modules_ghost_constants: {}
   node_modules_ghost_core: {}
@@ -197,7 +193,6 @@ volumes:
   node_modules_ghost_ghost: {}
   node_modules_ghost_html-to-plaintext: {}
   node_modules_ghost_i18n: {}
-  node_modules_ghost_importer-handler-content-files: {}
   node_modules_ghost_in-memory-repository: {}
   node_modules_ghost_job-manager: {}
   node_modules_ghost_link-redirects: {}
@@ -213,7 +208,6 @@ volumes:
   node_modules_ghost_minifier: {}
   node_modules_ghost_model-to-domain-event-interceptor: {}
   node_modules_ghost_mw-error-handler: {}
-  node_modules_ghost_mw-version-match: {}
   node_modules_ghost_mw-vhost: {}
   node_modules_ghost_nql-filter-expansions: {}
   node_modules_ghost_offers: {}
