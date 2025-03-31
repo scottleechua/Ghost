@@ -8,10 +8,7 @@ Contains:
 Last worked on a Mac (Apple Silicon) with Node v18.10.2 and Yarn 4.8.1. Yarn 1.22.22 was installed globally.
 
 ```bash
-git clone --recurse-submodules git@github.com:scottleechua/Ghost.git
-cd Ghost
-git checkout develop
-
+git clone --recurse-submodules git@github.com:scottleechua/Ghost.git && cd Ghost
 yarn install
 yarn setup
 
@@ -58,7 +55,8 @@ The script can be run from any directory by using its full path:
 ```
 
 ## Guidelines
-- Only make changes in `develop` branch.
+- Pull changes from upstream before generating new versions of files.
+- Only make changes in `develop` branch; the `main` branch is there for reference.
 - Only make changes in `scottleechua/` folder unless absolutely necessary.
 
 ## Resources
