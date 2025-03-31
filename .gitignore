@@ -184,4 +184,3 @@ temp*.sql
 # Scott's additions
 .yarnrc.yml
 .yarn
-yarn.lock
