@@ -2,6 +2,7 @@
 
 Contains:
 - `customize-portal.zsh` - generate `portal.min.js` with custom placeholders.
+- `generate-sodosearch.zsh` - generate `sodo-search.min.js` and `sodo-search-main.css` for local use.
 
 ## Local Dev Setup
 Last worked on a Mac (Apple Silicon) with Node v18.10.2 and Yarn 4.8.1. Yarn 1.22.22 was installed globally.
@@ -10,16 +11,19 @@ Last worked on a Mac (Apple Silicon) with Node v18.10.2 and Yarn 4.8.1. Yarn 1.2
 git clone --recurse-submodules git@github.com:scottleechua/Ghost.git
 cd Ghost
 git checkout develop
+
 yarn install
 yarn setup
-cd apps/portal
-yarn build
+
+cd scottleechua
+chmod +x customize-portal.zsh
+chmod +x generate-sodosearch.zsh
 ```
 
 ## Customize Portal
 
 ```bash
-./customize-portal.zsh "Full Name" "example@email.com" "path-to-theme"
+./customize-portal.zsh "Full Name" "example@email.com" "repo/theme"
 ```
 
 This script will:
@@ -32,7 +36,25 @@ This script will:
 The script can be run from any directory by using its full path:
 
 ```bash
-/Ghost/scottleechua/customize-portal.zsh "Full Name" "example@email.com" "your-repo-name/theme"
+/Ghost/scottleechua/customize-portal.zsh "Full Name" "example@email.com" "repo/theme"
+```
+
+## Generate SodoSearch
+
+```bash
+./generate-sodosearch.zsh "repo/theme"
+```
+
+This script will:
+1. Build SodoSearch
+2. Copy the built `sodo-search.min.js` to your theme directory
+3. Copy and rename `main.css` to `sodo-search-main.css` in your theme directory
+4. Create or update a `SODOSEARCH-VERSION` file with the current SodoSearch version
+
+The script can be run from any directory by using its full path:
+
+```bash
+/Ghost/scottleechua/generate-sodosearch.zsh "repo/theme"
 ```
 
 ## Guidelines
