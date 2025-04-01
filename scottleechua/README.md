@@ -55,12 +55,12 @@ The script can be run from any directory by using its full path:
 ## Customize SodoSearch
 
 ```bash
-./customize-sodosearch.zsh [--placeholder-string <string>] [--placeholder-color <hexcode>] [--placeholder-font <list of fonts>] <path/to/theme>
+./customize-sodosearch.zsh [--font-family <list of fonts>] [--placeholder-string <string>] <path/to/theme>
 ```
 
 This script will:
-1. Replace the searchbar placeholder text (if `--placeholder-string` is provided)
-2. Apply custom styles to the placeholder text (if `--placeholder-color` and/or `--placeholder-font` are provided)
+1. Apply custom font family to the whole search element (if `--font-family` is provided)
+2. Replace the searchbar placeholder text (if `--placeholder-string` is provided)
 3. Build SodoSearch
 4. Copy the built `sodo-search.min.js` to your theme directory
 5. Copy and rename `main.css` to `sodo-search-main.css` to your theme directory
@@ -72,14 +72,14 @@ Examples:
 # Basic usage (only theme path required)
 ./customize-sodosearch.zsh "path/to/theme"
 
+# With custom font family
+./customize-sodosearch.zsh --font-family "Arial, sans-serif" "path/to/theme"
+
 # With custom placeholder text
 ./customize-sodosearch.zsh --placeholder-string "Search..." "path/to/theme"
 
-# With custom placeholder text and color
-./customize-sodosearch.zsh --placeholder-string "Search..." --placeholder-color "#6B7280" "path/to/theme"
-
 # With all customization options
-./customize-sodosearch.zsh --placeholder-string "Search..." --placeholder-color "#6B7280" --placeholder-font "'Arial, sans-serif'" "path/to/theme"
+./customize-sodosearch.zsh --font-family "Arial, sans-serif" --placeholder-string "Search..." "path/to/theme"
 ```
 
 The script can be run from any directory by using its full path:

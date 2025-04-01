@@ -1,14 +1,12 @@
 #!/bin/zsh
 
 # Parse command line arguments
-PLACEHOLDER_COLOR=""
-PLACEHOLDER_FONT=""
+FONT_FAMILY=""
 PLACEHOLDER_STRING=""
 
 while [[ "$#" -gt 0 ]]; do
     case $1 in
-        --placeholder-color) PLACEHOLDER_COLOR="$2"; shift ;;
-        --placeholder-font) PLACEHOLDER_FONT="$2"; shift ;;
+        --font-family) FONT_FAMILY="$2"; shift ;;
         --placeholder-string) PLACEHOLDER_STRING="$2"; shift ;;
         *) break ;;
     esac
@@ -17,10 +15,9 @@ done
 
 # Check if all required arguments are provided
 if [ "$#" -ne 1 ]; then
-    echo "Usage: $0 [--placeholder-color <color>] [--placeholder-font <font-family>] [--placeholder-string <text>] <path_to_theme>"
-    echo "  --placeholder-color    Set placeholder text color (e.g., #6B7280)"
-    echo "  --placeholder-font     Set placeholder font family (e.g., 'Arial, sans-serif')"
-    echo "  --placeholder-string   Set placeholder text (e.g., 'Search...')"
+    echo "Usage: $0 [--font-family <font-family>] [--placeholder-string <text>] <path_to_theme>"
+    echo "  --font-family         Set font family (e.g., 'Arial, sans-serif')"
+    echo "  --placeholder-string  Set placeholder text (e.g., 'Search...')"
     exit 1
 fi
 
@@ -51,24 +48,14 @@ if [ ! -z "$PLACEHOLDER_STRING" ]; then
     sed -i '' "s/Search posts, tags and authors/$PLACEHOLDER_STRING/g" "$GHOST_ROOT/apps/sodo-search/src/components/PopupModal.js"
 fi
 
-# Edit placeholder styles if either color or font is provided
-if [ ! -z "$PLACEHOLDER_COLOR" ] || [ ! -z "$PLACEHOLDER_FONT" ]; then
-    echo "Editing placeholder styles..."
-    # Remove existing placeholder styles if they exist
-    sed -i '' '/input::placeholder {/,/}/d' "$GHOST_ROOT/apps/sodo-search/src/index.css"
+# Edit styles if font-family is provided
+if [ ! -z "$FONT_FAMILY" ]; then
+    echo "Editing styles..."
     
-    # Build the new placeholder styles
-    PLACEHOLDER_STYLES="input::placeholder {\n"
-    if [ ! -z "$PLACEHOLDER_COLOR" ]; then
-        PLACEHOLDER_STYLES+="    color: $PLACEHOLDER_COLOR !important;\n"
-    fi
-    if [ ! -z "$PLACEHOLDER_FONT" ]; then
-        PLACEHOLDER_STYLES+="    font-family: $PLACEHOLDER_FONT;\n"
-    fi
-    PLACEHOLDER_STYLES+="}"
-    
-    # Add the new styles to index.css
-    echo -e "\n$PLACEHOLDER_STYLES" >> "$GHOST_ROOT/apps/sodo-search/src/index.css"
+    # Add font-family to the existing html block
+    sed -i '' '/^html {/a\
+    font-family: '"$FONT_FAMILY"';\
+' "$GHOST_ROOT/apps/sodo-search/src/index.css"
 fi
 
 echo "Build started..."
@@ -96,12 +83,9 @@ if [ ! -z "$PLACEHOLDER_STRING" ]; then
 fi
 
 # Restore original index.css if styles were edited
-if [ ! -z "$PLACEHOLDER_COLOR" ] || [ ! -z "$PLACEHOLDER_FONT" ]; then
-    # First remove the placeholder styles
-    sed -i '' '/^[[:space:]]*input::placeholder {/,/^[[:space:]]*}/d' "$GHOST_ROOT/apps/sodo-search/src/index.css"
-    
-    # Then clean up newlines, ensuring only one at the end
-    sed -i '' -e :a -e '/^\n*$/{$d;N;ba' -e '}' "$GHOST_ROOT/apps/sodo-search/src/index.css"
+if [ ! -z "$FONT_FAMILY" ]; then
+    # Remove only the font-family line, preserving other rules
+    sed -i '' '/^[[:space:]]*font-family:/d' "$GHOST_ROOT/apps/sodo-search/src/index.css"
 fi
 
 echo "Done!"
