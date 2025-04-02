@@ -70,6 +70,14 @@ if [ "$HIDE_ALREADY_MEMBER" = true ]; then
     sed -i '' "/\.gh-portal-signup-message {/,/}/s/display: $ORIGINAL_DISPLAY;/display: none !important;/g" "$GHOST_ROOT/apps/portal/src/components/pages/SignupPage.js"
 fi
 
+# Temporarily modify portal's vite.config.js to only include English translations
+echo "Modifying portal's vite.config.js to use English-only translations..."
+PORTAL_VITE_CONFIG="$GHOST_ROOT/apps/portal/vite.config.js"
+# Create a backup of the original config
+cp "$PORTAL_VITE_CONFIG" "${PORTAL_VITE_CONFIG}.backup"
+# Modify the config to only include English translations
+sed -i '' 's|dynamicRequireTargets: SUPPORTED_LOCALES.map(locale => `../../ghost/i18n/locales/${locale}/portal.json`)|dynamicRequireTargets: ['\''../../ghost/i18n/locales/en/portal.json'\'']|' "$PORTAL_VITE_CONFIG"
+
 echo "Build started..."
 
 # Run yarn build
@@ -81,8 +89,14 @@ echo "Build completed."
 cp "$GHOST_ROOT/apps/portal/umd/portal.min.js" "$HOME/$THEME_PATH/"
 echo "Copied to $THEME_PATH/portal.min.js."
 
-echo "$PORTAL_VERSION" > "$HOME/$THEME_PATH/PORTAL-VERSION"
-echo "Bumped $THEME_PATH/PORTAL-VERSION to $PORTAL_VERSION"
+# Check if version needs to be updated
+CURRENT_VERSION=$(cat "$HOME/$THEME_PATH/PORTAL-VERSION" 2>/dev/null || echo "")
+if [ "$CURRENT_VERSION" != "$PORTAL_VERSION" ]; then
+    echo "$PORTAL_VERSION" > "$HOME/$THEME_PATH/PORTAL-VERSION"
+    echo "Bumped $THEME_PATH/PORTAL-VERSION to v$PORTAL_VERSION"
+else
+    echo "Portal already up to date."
+fi
 
 echo "Cleaning up changes..."
 
@@ -105,6 +119,10 @@ fi
 if [ "$HIDE_ALREADY_MEMBER" = true ]; then
     sed -i '' "/\.gh-portal-signup-message {/,/}/s/display: none !important;/display: $ORIGINAL_DISPLAY;/g" "$GHOST_ROOT/apps/portal/src/components/pages/SignupPage.js"
 fi
+
+# Restore original portal vite.config.js
+mv "${PORTAL_VITE_CONFIG}.backup" "$PORTAL_VITE_CONFIG"
+echo "Restored portal's vite.config.js"
 
 echo "Done!"
 echo ""
