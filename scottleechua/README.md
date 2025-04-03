@@ -83,6 +83,19 @@ The script can be run from any directory by using its full path:
 /Ghost/scottleechua/customize-sodosearch.zsh "path/to/theme"
 ```
 
+## Syncing with main Ghost repo
+1. On GitHub, sync `upstream` branch.
+2. On local:
+    ```bash
+    git fetch && git pull
+    git merge upstream develop
+    ```
+3. In case of merge conflicts, prefer to overwrite `develop` with the incoming file. For instance, to overwrite `yarn.lock`, run:
+    ```bash
+    git checkout upstream -- yarn.lock
+    ```
+4. Commit and push.
+
 ## Guidelines
 - Pull changes from upstream before generating new versions of files.
 - Only make changes in `develop` branch; the `main` branch is there for reference.
