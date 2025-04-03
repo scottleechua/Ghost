@@ -5,16 +5,11 @@ Contains:
 - `customize-sodosearch.zsh`
 
 ## Local Dev Setup
-Last worked on a Mac (Apple Silicon) with Node v18.10.2 and Yarn 4.8.1. Yarn 1.22.22 was installed globally.
+Last worked on a Mac (Apple Silicon) with Node v20.19.0 and Yarn 1.22.22.
 
 ```bash
 git clone --recurse-submodules git@github.com:scottleechua/Ghost.git && cd Ghost
-yarn install
 yarn setup
-
-cd scottleechua
-chmod +x customize-portal.zsh
-chmod +x customize-sodosearch.zsh
 ```
 
 ## Customize Portal
@@ -26,7 +21,7 @@ chmod +x customize-sodosearch.zsh
 This script will:
 1. Replace placeholder text in Portal components with your information (if `--placeholder-name` and/or `--placeholder-email` are provided)
 2. Hide the "Already a member?" message (if `--hide-already-member` is provided)
-3. Build the Portal
+3. Build a minified Portal with `en` locale only
 4. Copy the built `portal.min.js` to your theme directory
 5. Create or update a `PORTAL-VERSION` file with the current Portal version
 6. Restore the original placeholder text and styles
@@ -61,7 +56,7 @@ The script can be run from any directory by using its full path:
 This script will:
 1. Apply custom font family to the whole search element (if `--font-family` is provided)
 2. Replace the searchbar placeholder text (if `--placeholder-string` is provided)
-3. Build SodoSearch
+3. Build a minified SodoSearch with `en` locale only
 4. Copy the built `sodo-search.min.js` to your theme directory
 5. Copy and rename `main.css` to `sodo-search-main.css` to your theme directory
 6. Create or update a `SODOSEARCH-VERSION` file with the current SodoSearch version
