@@ -180,7 +180,3 @@ temp*.sql
 # Docker Yarn Cache
 .yarncache
 .yarncachecopy
-
-# Scott's additions
-.yarnrc.yml
-.yarn
