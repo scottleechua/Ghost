@@ -84,6 +84,9 @@ The script can be run from any directory by using its full path:
 ```
 
 ## Syncing with main Ghost repo
+
+**Might just be a case of syncing `develop` branch directly!**
+
 1. On GitHub, sync `upstream` branch.
 2. On local:
     ```bash
