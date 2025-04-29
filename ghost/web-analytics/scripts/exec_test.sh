@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Get the directory where this script is located
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
+
 # Record start time
 start_time=$(date +%s)
 
@@ -18,31 +21,40 @@ fi
 
 # Parse command line options
 jobs=""
+test_name=""
 while [[ $# -gt 0 ]]; do
     case $1 in
         -j|--jobs)
-            if [[ -n "${2:-}" ]]; then
-                jobs="$2"
-                shift 2
-            else
+            if [[ -z "${2:-}" || "$2" == -* ]]; then
                 echo "Error: -j|--jobs requires a number argument"
                 exit 1
             fi
+            jobs="$2"
+            shift 2
+            ;;
+        -n|--name)
+            if [[ -z "${2:-}" || "$2" == -* ]]; then
+                echo "Error: -n|--name requires a <test_name> argument"
+                exit 1
+            fi
+            test_name="$2"
+            shift 2
             ;;
         *)
             # Store the test name if provided
-            test_name="$1"
-            shift
+            # test_name="$1"
+            # shift
+            echo "Error: Unknown option: $1"
+            exit 1
             ;;
     esac
 done
-
+# Set and export the TB_VERSION variable from .tinyenv file
+source "$SCRIPT_DIR/../.tinyenv"
+export TB_VERSION
+echo "Using TB_VERSION: $TB_VERSION"
 export TB_VERSION_WARNING=0
 
-# Default version if not provided
-export TB_VERSION=${TB_VERSION:-8}
-
-echo "TB_VERSION: $TB_VERSION"
 # Get the expected count once, outside of any function
 ndjson_file="./tests/fixtures/analytics_events.ndjson"
 export expected_count=$(grep -c '^' "$ndjson_file" || echo "0")

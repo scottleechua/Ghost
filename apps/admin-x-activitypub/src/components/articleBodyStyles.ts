@@ -158,33 +158,11 @@ a:hover {
     font-family: var(--font-serif-alt);
 }
 
-.gh-article-source {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    margin-top: 12px;
-    font-size: 1.5rem;
-    line-height: 1.2;
-    color: var(--color-secondary-text);
-}
-
-.gh-article-source:hover {
-    opacity: 1;
-    text-decoration: underline;
-}
-
-.gh-article-source svg {
-    width: 12px;
-    height: 12px;
-    margin-top: 1px;
-}
-
 .gh-article-meta {
     display: flex;
     align-items: center;
-    gap: 9px;
+    gap: 8px;
     margin-top: 16px;
-    margin-left: 6px;
 }
 
 .gh-article-meta:hover {
@@ -194,17 +172,29 @@ a:hover {
 .gh-article-author-image {
     display: flex;
     margin-right: 8px;
+    margin-left: 6px;
 }
 
 .gh-article-author-image span {
+    display: flex;
+    justify-content: center;
+    align-items: center;
     position: relative;
     width: 46px;
     height: 46px;
     overflow: hidden;
     margin: 0 -8px;
-    background-color: var(--color-light-gray);
+    background-color: #F4F5F6;
     border-radius: 50%;
     border: 3px solid var(--background-color);
+}
+
+html.has-sepia-bg .gh-article-author-image span {
+    background-color: #EFEDE6;
+}
+
+html.has-light-text .gh-article-author-image span {
+    background-color: #394047;
 }
 
 .gh-article-author-image span:first-child {
@@ -219,12 +209,18 @@ a:hover {
     z-index: 8;
 }
 
-.gh-article-author-image :is(img, svg) {
+.gh-article-author-image img {
     position: absolute;
     inset: 0;
     width: 100%;
     height: 100%;
     object-fit: cover;
+}
+
+.gh-article-author-image svg {
+    width: 18px;
+    height: 18px;
+    color: #95A1AD;
 }
 
 .gh-article-meta-wrapper {
@@ -240,23 +236,24 @@ a:hover {
     letter-spacing: -0.008em;
 }
 
-.gh-article-meta-content {
+.gh-article-source {
     display: flex;
-    gap: 4px;
     align-items: center;
+    gap: 4px;
     font-size: 1.5rem;
     line-height: 1.2;
-    letter-spacing: -0.003em;
     color: var(--color-secondary-text);
+    width: fit-content;
 }
 
-.gh-article-meta:hover .gh-article-meta-content {
-    text-decoration: underline;
-}
-
-.gh-article-meta-content svg {
+.gh-article-source svg {
     width: 12px;
     height: 12px;
+    margin-top: 1px;
+}
+
+.gh-article-meta:hover .gh-article-source {
+    text-decoration: underline;
 }
 
 .gh-article-image {
@@ -315,7 +312,7 @@ unless a heading is the very first element in the post content */
 
 /* Add a small margin between a heading and paragraph after it */
 .gh-content > [id] + p {
-    margin-top: calc(8px * var(--content-spacing-factor, 1));
+    margin-top: calc(12px * var(--content-spacing-factor, 1));
 }
 
 /* A larger margin before/after dividers, blockquotes and embeds */
@@ -334,21 +331,40 @@ unless a heading is the very first element in the post content */
 }
 
 .gh-content h1 {
-    font-size: calc(2.2em * var(--factor, 1));
+    font-size: 1.9em;
 }
 
 .gh-content h2 {
-    font-size: calc(2.4rem * var(--content-spacing-factor, 1));
-    line-height: 1.4166666667;
+    font-size: 1.6em;
 }
 
 .gh-content h3 {
-    font-size: calc(1.3em * var(--factor, 1));
+    font-size: 1.3em;
+}
+
+.gh-content h4 {
+    font-size: 1.2em;
+}
+
+.gh-content h5 {
+    font-size: 1.1em;
+}
+
+.gh-content h6 {
+    font-size: 1em;
 }
 
 .gh-content a {
-    color: rgb(29 78 216);
+    color: #14B8FF;
     text-decoration: underline;
+}
+
+html.has-light-text .gh-content a {
+    color: #14B8FF;
+}
+
+html.has-sepia-bg .gh-content a {
+    color: #DD6B02;
 }
 
 .gh-content .kg-callout-card .kg-callout-text,
@@ -3154,6 +3170,44 @@ p.kg-collection-card-post-excerpt {
     margin-top: 2em;
 }
 
+/* Paid content styles */
+.gh-paid-content-notice {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    padding: 36px;
+    background: rgba(0, 0, 0, 0.035);
+    border-radius: 14px;
+    font-size: 16px;
+}
+
+html.has-light-text .gh-paid-content-notice {
+    background: rgba(255, 255, 255, 0.035);
+}
+
+.gh-paid-content-notice h3 {
+    letter-spacing: -0.015em !important;
+}
+
+.gh-paid-content-notice p {
+    max-width: 350px;
+    text-align: center;
+    line-height: 1.3em;
+}
+
+.gh-paid-content-cta {
+    display: block;
+    color: var(--background-color) !important;
+    background: var(--color-primary-text);
+    text-decoration: none !important;
+    font-weight: 600;
+    font-size: 0.9em;
+    padding: 8px 16px;
+    margin-top: 8px;
+    border-radius: 6px;
+}
+
 /* Responsive styles */
 
 @media (max-width: 640px) {
@@ -3197,7 +3251,8 @@ p.kg-collection-card-post-excerpt {
         font-size: 1em;
     }
 }
-  </style>`;
+
+</style>`;
 };
 
 export default articleBodyStyles;

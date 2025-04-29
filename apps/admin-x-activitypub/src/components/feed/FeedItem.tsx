@@ -5,19 +5,19 @@ import {Button, LucideIcon, Skeleton} from '@tryghost/shade';
 import {Button as ButtonX, Heading, Icon, showToast} from '@tryghost/admin-x-design-system';
 
 import APAvatar from '../global/APAvatar';
+import ImageLightbox, {useLightboxImages} from '../global/ImageLightbox';
 
 import FeedItemStats from './FeedItemStats';
 import clsx from 'clsx';
 import getReadingTime from '../../utils/get-reading-time';
 import getUsername from '../../utils/get-username';
-import {handleProfileClick, handleProfileClickRR} from '../../utils/handle-profile-click';
+import {handleProfileClickRR} from '../../utils/handle-profile-click';
 import {openLinksInNewTab, stripHtml} from '../../utils/content-formatters';
 import {renderTimestamp} from '../../utils/render-timestamp';
 import {useDeleteMutationForUser} from '../../hooks/use-activity-pub-queries';
-import {useFeatureFlags} from '@src/lib/feature-flags';
 import {useNavigate} from '@tryghost/admin-x-framework';
 
-function getAttachment(object: ObjectProperties) {
+export function getAttachment(object: ObjectProperties) {
     let attachment;
 
     if (object.image) {
@@ -44,12 +44,22 @@ function getAttachment(object: ObjectProperties) {
     return attachment;
 }
 
-export function renderFeedAttachment(object: ObjectProperties) {
+export function renderFeedAttachment(
+    object: ObjectProperties,
+    onImageClick?: (url: string) => void
+) {
     const attachment = getAttachment(object);
 
     if (!attachment) {
         return null;
     }
+
+    const handleImageClick = (url: string) => (e: React.MouseEvent) => {
+        e.stopPropagation();
+        if (onImageClick) {
+            onImageClick(url);
+        }
+    };
 
     if (Array.isArray(attachment)) {
         const attachmentCount = attachment.length;
@@ -66,7 +76,7 @@ export function renderFeedAttachment(object: ObjectProperties) {
         return (
             <div className={`attachment-gallery mt-3 grid ${gridClass} gap-2`}>
                 {attachment.map((item, index) => (
-                    <img key={item.url} alt={item.name || `Image-${index}`} className={`size-full rounded-md object-cover outline outline-1 -outline-offset-1 outline-black/10 ${attachmentCount === 3 && index === 0 ? 'row-span-2' : ''}`} src={item.url} />
+                    <img key={item.url} alt={item.name || `Image-${index}`} className={`size-full cursor-pointer rounded-md object-cover outline outline-1 -outline-offset-1 outline-black/10 ${attachmentCount === 3 && index === 0 ? 'row-span-2' : ''}`} src={item.url} onClick={onImageClick ? handleImageClick(item.url) : undefined} />
                 ))}
             </div>
         );
@@ -76,7 +86,7 @@ export function renderFeedAttachment(object: ObjectProperties) {
     case 'image/jpeg':
     case 'image/png':
     case 'image/gif':
-        return <img alt={attachment.name || 'Image'} className={`${object.type === 'Article' ? 'w-full rounded-t-md' : 'mt-3 max-h-[420px] rounded-md outline outline-1 -outline-offset-1 outline-black/10'}`} src={attachment.url} />;
+        return <img alt={attachment.name || 'Image'} className={`cursor-pointer ${object.type === 'Article' ? 'w-full rounded-t-md' : 'mt-3 max-h-[420px] rounded-md outline outline-1 -outline-offset-1 outline-black/10'}`} src={attachment.url} onClick={onImageClick ? handleImageClick(attachment.url) : undefined} />;
     case 'video/mp4':
     case 'video/webm':
         return <div className='relative mb-4 mt-3'>
@@ -90,8 +100,8 @@ export function renderFeedAttachment(object: ObjectProperties) {
     default:
         if (object.image || attachment.type === 'Image') {
             const imageClassName = object.type === 'Article'
-                ? 'aspect-[16/7.55] w-full rounded-t-md object-cover'
-                : 'mt-3 max-h-[420px] rounded-md outline outline-1 -outline-offset-1 outline-black/10';
+                ? 'cursor-pointer aspect-[16/7.55] w-full rounded-t-md object-cover'
+                : 'cursor-pointer mt-3 max-h-[420px] rounded-md outline outline-1 -outline-offset-1 outline-black/10';
 
             let imageUrl;
             if (object.image === undefined) {
@@ -107,6 +117,7 @@ export function renderFeedAttachment(object: ObjectProperties) {
                     alt={attachment.name || 'Image'}
                     className={imageClassName}
                     src={imageUrl}
+                    onClick={onImageClick ? handleImageClick(imageUrl) : undefined}
                 />
             );
         }
@@ -268,8 +279,14 @@ const FeedItem: React.FC<FeedItemProps> = ({
         </Button>
     );
 
-    const {isEnabled} = useFeatureFlags();
     const navigate = useNavigate();
+
+    const {
+        lightboxState,
+        openLightbox,
+        closeLightbox,
+        navigateToIndex
+    } = useLightboxImages(object);
 
     if (layout === 'feed') {
         return (
@@ -280,11 +297,7 @@ const FeedItem: React.FC<FeedItemProps> = ({
                             <Icon colorClass='text-gray-700 shrink-0 dark:text-gray-600' name='reload' size={'sm'} />
                             <div className='flex min-w-0 items-center gap-1 text-sm'>
                                 <span className='truncate break-all hover:underline' title={getUsername(actor)} onClick={(e) => {
-                                    if (isEnabled('ap-routes')) {
-                                        handleProfileClickRR(actor, navigate, e);
-                                    } else {
-                                        handleProfileClick(actor, e);
-                                    }
+                                    handleProfileClickRR(actor, navigate, e);
                                 }}>{actor.name}</span>
                                 reposted
                             </div>
@@ -294,11 +307,7 @@ const FeedItem: React.FC<FeedItemProps> = ({
                                 <APAvatar author={author} disabled={isPending} />
                                 <div className='flex min-w-0 grow flex-col gap-0.5' onClick={(e) => {
                                     if (!isPending) {
-                                        if (isEnabled('ap-routes')) {
-                                            handleProfileClickRR(author, navigate, e);
-                                        } else {
-                                            handleProfileClick(author, e);
-                                        }
+                                        handleProfileClickRR(author, navigate, e);
                                     }
                                 }}>
                                     <span className={`min-w-0 truncate break-all font-semibold leading-[normal] ${!isPending ? 'hover-underline' : ''} dark:text-white`}
@@ -328,7 +337,7 @@ const FeedItem: React.FC<FeedItemProps> = ({
                                 <div className='flex flex-col'>
                                     <div className=''>
                                         {(object.type === 'Article') ? <div className='rounded-md border border-gray-150 transition-colors hover:bg-gray-75 dark:border-gray-950 dark:hover:bg-gray-950'>
-                                            {renderFeedAttachment(object)}
+                                            {renderFeedAttachment(object, openLightbox)}
                                             <div className='p-5'>
                                                 <div className='mb-1 text-pretty text-lg font-semibold leading-tight tracking-tight' data-test-activity-heading>{object.name}</div>
                                                 <div className='line-clamp-3 leading-[1.4em]'>{object.preview?.content}</div>
@@ -357,7 +366,7 @@ const FeedItem: React.FC<FeedItemProps> = ({
                                                 {isTruncated && (
                                                     <button className='mt-1 text-blue-600' type='button'>Show more</button>
                                                 )}
-                                                {renderFeedAttachment(object)}
+                                                {renderFeedAttachment(object, openLightbox)}
                                             </div>
                                         }
                                     </div>
@@ -381,6 +390,13 @@ const FeedItem: React.FC<FeedItemProps> = ({
                         </div>
                     </div>
                 )}
+                <ImageLightbox
+                    currentIndex={lightboxState.currentIndex}
+                    images={lightboxState.images}
+                    isOpen={lightboxState.isOpen}
+                    onClose={closeLightbox}
+                    onNavigate={navigateToIndex}
+                />
             </>
         );
     } else if (layout === 'modal') {
@@ -393,11 +409,7 @@ const FeedItem: React.FC<FeedItemProps> = ({
                                 {(type === 'Announce') && <div className='z-10 col-span-2 mb-2 flex items-center gap-2 text-gray-700 dark:text-gray-600'>
                                     <div><Icon colorClass='text-gray-700 shrink-0 dark:text-gray-600' name='reload' size={'sm'}></Icon></div>
                                     <span className='flex min-w-0 items-center gap-1'><span className='truncate break-all hover:underline' title={getUsername(actor)} onClick={(e) => {
-                                        if (isEnabled('ap-routes')) {
-                                            handleProfileClickRR(actor, navigate, e);
-                                        } else {
-                                            handleProfileClick(actor, e);
-                                        }
+                                        handleProfileClickRR(actor, navigate, e);
                                     }}>{actor.name}</span> reposted</span>
                                 </div>}
                                 {(showHeader) && <>
@@ -406,11 +418,7 @@ const FeedItem: React.FC<FeedItemProps> = ({
                                     </div>
                                     <div className='relative z-10 flex w-full min-w-0 cursor-pointer flex-col overflow-visible text-[1.5rem]' onClick={(e) => {
                                         if (!isPending) {
-                                            if (isEnabled('ap-routes')) {
-                                                handleProfileClickRR(author, navigate, e);
-                                            } else {
-                                                handleProfileClick(author, e);
-                                            }
+                                            handleProfileClickRR(author, navigate, e);
                                         }
                                     }}>
                                         <div className='flex w-full'>
@@ -426,7 +434,7 @@ const FeedItem: React.FC<FeedItemProps> = ({
                                     <div className='flex flex-col items-start'>
                                         {object.name && <Heading className='mb-1 leading-tight' level={4} data-test-activity-heading>{object.name}</Heading>}
                                         <div dangerouslySetInnerHTML={({__html: openLinksInNewTab(object.content || '') ?? ''})} className='ap-note-content-large text-pretty text-[1.6rem] tracking-[-0.011em] text-gray-900 dark:text-gray-600 [&_p+p]:mt-3'></div>
-                                        {renderFeedAttachment(object)}
+                                        {renderFeedAttachment(object, openLightbox)}
                                         <div className='space-between ml-[-7px] mt-3 flex'>
                                             {showStats && <FeedItemStats
                                                 commentCount={commentCount}
@@ -447,6 +455,13 @@ const FeedItem: React.FC<FeedItemProps> = ({
                     </div>
 
                 )}
+                <ImageLightbox
+                    currentIndex={lightboxState.currentIndex}
+                    images={lightboxState.images}
+                    isOpen={lightboxState.isOpen}
+                    onClose={closeLightbox}
+                    onNavigate={navigateToIndex}
+                />
             </>
         );
     } else if (layout === 'reply') {
@@ -462,15 +477,11 @@ const FeedItem: React.FC<FeedItemProps> = ({
                                 <div className='flex w-full items-center justify-between'>
                                     <div className='relative z-10 flex w-full min-w-0 flex-col overflow-visible' onClick={(e) => {
                                         if (!isPending) {
-                                            if (isEnabled('ap-routes')) {
-                                                handleProfileClickRR(author, navigate, e);
-                                            } else {
-                                                handleProfileClick(author, e);
-                                            }
+                                            handleProfileClickRR(author, navigate, e);
                                         }
                                     }}>
                                         <div className='flex'>
-                                            <span className='min-w-0 truncate whitespace-nowrap font-semibold after:mx-1 after:font-normal after:text-gray-700 after:content-["·"]' data-test-activity-heading>{author.name}</span>
+                                            <span className='min-w-0 truncate whitespace-nowrap font-semibold text-black after:mx-1 after:font-normal after:text-gray-700 after:content-["·"] dark:text-white' data-test-activity-heading>{author.name}</span>
                                             <div>{renderTimestamp(object, (isPending === false && !object.authored))}</div>
                                         </div>
                                         <div className='flex'>
@@ -487,11 +498,11 @@ const FeedItem: React.FC<FeedItemProps> = ({
                                     />
                                 </div>
                                 <div className={`relative z-10 col-start-2 col-end-3 w-full gap-4`}>
-                                    <div className='flex flex-col'>
-                                        {(object.type === 'Article') && renderFeedAttachment(object)}
+                                    <div className='flex flex-col items-start'>
+                                        {(object.type === 'Article') && renderFeedAttachment(object, openLightbox)}
                                         {object.name && <Heading className='my-1 text-pretty leading-tight' level={5} data-test-activity-heading>{object.name}</Heading>}
                                         {(object.preview && object.type === 'Article') ? <div className='line-clamp-3 leading-tight'>{object.preview.content}</div> : <div dangerouslySetInnerHTML={({__html: openLinksInNewTab(object.content || '') ?? ''})} className='ap-note-content text-pretty tracking-[-0.006em] text-gray-900 dark:text-gray-600 [&_p+p]:mt-3'></div>}
-                                        {(object.type === 'Note') && renderFeedAttachment(object)}
+                                        {(object.type === 'Note') && renderFeedAttachment(object, openLightbox)}
                                         {(object.type === 'Article') && <ButtonX
                                             className={`mt-3 self-start text-gray-900 transition-all hover:opacity-60`}
                                             color='grey'
@@ -520,6 +531,13 @@ const FeedItem: React.FC<FeedItemProps> = ({
                         {!last && <div className="absolute bottom-0 left-[18px] top-[6.5rem] z-0 mb-[-13px] w-[2px] rounded-sm bg-gray-200"></div>}
                     </div>
                 )}
+                <ImageLightbox
+                    currentIndex={lightboxState.currentIndex}
+                    images={lightboxState.images}
+                    isOpen={lightboxState.isOpen}
+                    onClose={closeLightbox}
+                    onNavigate={navigateToIndex}
+                />
             </>
         );
     } else if (layout === 'inbox') {
@@ -536,20 +554,12 @@ const FeedItem: React.FC<FeedItemProps> = ({
                                             title={getUsername(author)}
                                             data-test-activity-heading
                                             onClick={(e) => {
-                                                if (isEnabled('ap-routes')) {
-                                                    handleProfileClickRR(author, navigate, e);
-                                                } else {
-                                                    handleProfileClick(author, e);
-                                                }
+                                                handleProfileClickRR(author, navigate, e);
                                             }}
                                         >{author.name}
                                         </span>
                                         {(type === 'Announce') && <span className='z-10 flex items-center gap-1 text-gray-700 dark:text-gray-600'><Icon colorClass='text-gray-700 shrink-0 dark:text-gray-600' name='reload' size={'sm'}></Icon><span className='hover:underline' title={getUsername(actor)} onClick={(e) => {
-                                            if (isEnabled('ap-routes')) {
-                                                handleProfileClickRR(actor, navigate, e);
-                                            } else {
-                                                handleProfileClick(actor, e);
-                                            }
+                                            handleProfileClickRR(actor, navigate, e);
                                         }}>{actor.name}</span> reposted</span>}
                                         <span className='shrink-0 whitespace-nowrap text-gray-600 before:mr-1 before:content-["·"]' title={`${timestamp}`}>{renderTimestamp(object, !object.authored)}</span>
                                     </> :

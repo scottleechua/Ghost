@@ -7,8 +7,7 @@ SQL >
     %
         select
             os,
-            uniqExact(session_id) as visits,
-            count() as pageviews
+            uniqExact(session_id) as visits
         from _mv_hits h
         inner join filtered_sessions fs
             on fs.session_id = h.session_id
@@ -46,8 +45,7 @@ SQL >
             {% if defined(source) %} and source = {{ String(source, description="Source to filter on", required=False) }} {% end %}
             {% if defined(location) %} and location = {{ String(location, description="Location to filter on", required=False) }} {% end %}
             {% if defined(pathname) %} and pathname = {{ String(pathname, description="Pathname to filter on", required=False) }} {% end %}
+            {% if defined(post_uuid) %} and post_uuid = {{ String(post_uuid, description="Post UUID to filter on", required=False) }} {% end %}
         group by os
         order by visits desc
         limit {{ Int32(skip, 0) }},{{ Int32(limit, 50) }}
-
-
