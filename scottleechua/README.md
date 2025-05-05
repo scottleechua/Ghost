@@ -83,6 +83,14 @@ The script can be run from any directory by using its full path:
 /Ghost/scottleechua/customize-sodosearch.zsh "path/to/theme"
 ```
 
+## Updating dependencies inside portal or sodo-search
+
+1. `cd` to the relevant subfolder.
+2. Run: 
+    ```bash
+    yarn --cwd install
+    ```
+
 ## Syncing with main Ghost repo
 
 1, On GitHub, `Sync fork` on the `develop` branch.
