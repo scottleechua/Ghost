@@ -100,29 +100,11 @@ fi
 
 echo "Cleaning up changes..."
 
-# Restore name placeholder in all files
-if [ ! -z "$PLACEHOLDER_NAME" ]; then
-    sed -i '' "s/$PLACEHOLDER_NAME/Jamie Larson/g" "$GHOST_ROOT/apps/portal/src/components/pages/AccountProfilePage.js"
-    sed -i '' "s/$PLACEHOLDER_NAME/Jamie Larson/g" "$GHOST_ROOT/apps/portal/src/components/pages/OfferPage.js"
-    sed -i '' "s/$PLACEHOLDER_NAME/Jamie Larson/g" "$GHOST_ROOT/apps/portal/src/components/pages/SignupPage.js"
-fi
+# Remove vite config backup file
+rm -f "${PORTAL_VITE_CONFIG}.backup"
 
-# Restore email placeholder in all files
-if [ ! -z "$PLACEHOLDER_EMAIL" ]; then
-    sed -i '' "s/$PLACEHOLDER_EMAIL/jamie@example.com/g" "$GHOST_ROOT/apps/portal/src/components/pages/AccountProfilePage.js"
-    sed -i '' "s/$PLACEHOLDER_EMAIL/jamie@example.com/g" "$GHOST_ROOT/apps/portal/src/components/pages/OfferPage.js"
-    sed -i '' "s/$PLACEHOLDER_EMAIL/jamie@example.com/g" "$GHOST_ROOT/apps/portal/src/components/pages/SignupPage.js"
-    sed -i '' "s/$PLACEHOLDER_EMAIL/jamie@example.com/g" "$GHOST_ROOT/apps/portal/src/components/pages/SigninPage.js"
-fi
-
-# Restore CSS rule if flag was set
-if [ "$HIDE_ALREADY_MEMBER" = true ]; then
-    sed -i '' "/\.gh-portal-signup-message {/,/}/s/display: none !important;/display: $ORIGINAL_DISPLAY;/g" "$GHOST_ROOT/apps/portal/src/components/pages/SignupPage.js"
-fi
-
-# Restore original portal vite.config.js
-mv "${PORTAL_VITE_CONFIG}.backup" "$PORTAL_VITE_CONFIG"
-echo "Restored portal's vite.config.js"
+# Restore all modified files to their original state using Git
+(cd "$GHOST_ROOT/apps/portal" && git restore .)
 
 echo "Done!"
 echo ""

@@ -97,15 +97,11 @@ fi
 
 echo "Cleaning up changes..."
 
-# Restore original index.css if styles were edited
-if [ ! -z "$FONT_FAMILY" ]; then
-    # Remove only the font-family line, preserving other rules
-    sed -i '' '/^[[:space:]]*font-family:/d' "$GHOST_ROOT/apps/sodo-search/src/index.css"
-fi
+# Remove vite config backup file
+rm -f "${SODOSEARCH_VITE_CONFIG}.backup"
 
-# Restore original sodo-search vite.config.js
-mv "${SODOSEARCH_VITE_CONFIG}.backup" "$SODOSEARCH_VITE_CONFIG"
-echo "Restored sodo-search's vite.config.js"
+# Restore all modified files to their original state using Git
+(cd "$GHOST_ROOT/apps/sodo-search" && git restore .)
 
 echo "Done!"
 echo ""
