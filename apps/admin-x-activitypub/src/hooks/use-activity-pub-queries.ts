@@ -241,6 +241,31 @@ export function useLikeMutationForUser(handle: string) {
                     likedCount: currentAccount.likedCount + 1
                 };
             });
+        },
+        onError(error: {message: string, statusCode: number}, id) {
+            updateLikedCache(queryClient, QUERY_KEYS.feed, id, false);
+            updateLikedCache(queryClient, QUERY_KEYS.inbox, id, false);
+            updateLikedCache(queryClient, QUERY_KEYS.profilePosts('index'), id, false);
+            updateLikedCache(queryClient, QUERY_KEYS.postsLikedByAccount, id, false);
+
+            // Update account liked count
+            queryClient.setQueryData(QUERY_KEYS.account('index'), (currentAccount?: Account) => {
+                if (!currentAccount) {
+                    return currentAccount;
+                }
+                return {
+                    ...currentAccount,
+                    likedCount: currentAccount.likedCount - 1
+                };
+            });
+
+            if (error.statusCode === 403) {
+                showToast({
+                    title: 'Action failed',
+                    message: 'This user has restricted who can interact with their account.',
+                    type: 'error'
+                });
+            }
         }
     });
 }
@@ -271,6 +296,62 @@ export function useUnlikeMutationForUser(handle: string) {
                     likedCount: Math.max(0, currentAccount.likedCount - 1)
                 };
             });
+        }
+    });
+}
+
+export function useBlockMutationForUser(handle: string) {
+    const queryClient = useQueryClient();
+
+    return useMutation({
+        async mutationFn(account: Account) {
+            const siteUrl = await getSiteUrl();
+            const api = createActivityPubAPI(handle, siteUrl);
+
+            return api.block(new URL(account.apId));
+        },
+        onMutate: (account: Account) => {
+            queryClient.setQueryData(
+                QUERY_KEYS.account(account.handle),
+                (currentAccount?: Account) => {
+                    if (!currentAccount) {
+                        return currentAccount;
+                    }
+                    return {
+                        ...currentAccount,
+                        blockedByMe: true,
+                        followedByMe: false,
+                        followsMe: false
+                    };
+                }
+            );
+        }
+    });
+}
+
+export function useUnblockMutationForUser(handle: string) {
+    const queryClient = useQueryClient();
+
+    return useMutation({
+        async mutationFn(account: Account) {
+            const siteUrl = await getSiteUrl();
+            const api = createActivityPubAPI(handle, siteUrl);
+
+            return api.unblock(new URL(account.apId));
+        },
+        onMutate: (account: Account) => {
+            queryClient.setQueryData(
+                QUERY_KEYS.account(account.handle),
+                (currentAccount?: Account) => {
+                    if (!currentAccount) {
+                        return currentAccount;
+                    }
+                    return {
+                        ...currentAccount,
+                        blockedByMe: false
+                    };
+                }
+            );
         }
     });
 }
@@ -319,6 +400,17 @@ export function useRepostMutationForUser(handle: string) {
         onMutate: (id) => {
             updateRepostCache(queryClient, QUERY_KEYS.feed, id, true);
             updateRepostCache(queryClient, QUERY_KEYS.inbox, id, true);
+        },
+        onError(error: {message: string, statusCode: number}, id) {
+            updateRepostCache(queryClient, QUERY_KEYS.feed, id, false);
+            updateRepostCache(queryClient, QUERY_KEYS.inbox, id, false);
+            if (error.statusCode === 403) {
+                showToast({
+                    title: 'Action failed',
+                    message: 'This user has restricted who can interact with their account.',
+                    type: 'error'
+                });
+            }
         }
     });
 }
@@ -576,7 +668,17 @@ export function useFollowMutationForUser(handle: string, onSuccess: () => void, 
 
             onSuccess();
         },
-        onError
+        onError(error: {message: string, statusCode: number}) {
+            onError();
+
+            if (error.statusCode === 403) {
+                showToast({
+                    title: 'Action failed',
+                    message: 'This user has restricted who can interact with their account.',
+                    type: 'error'
+                });
+            }
+        }
     });
 }
 
@@ -1029,7 +1131,7 @@ export function useReplyMutationForUser(handle: string, actorProps?: ActorProper
 
             updateActivityInCollection(queryClient, QUERY_KEYS.thread(variables.inReplyTo), 'posts', context?.id ?? '', () => preparedActivity);
         },
-        onError: (error, variables, context) => {
+        onError(error: {message: string, statusCode: number}, variables, context) {
             // eslint-disable-next-line no-console
             console.error(error);
 
@@ -1042,6 +1144,13 @@ export function useReplyMutationForUser(handle: string, actorProps?: ActorProper
             // We do not need to decrement the reply count of the inReplyTo post
             // in the thread as this is handled locally in the ArticleModal component
 
+            if (error.statusCode === 403) {
+                return showToast({
+                    title: 'Action failed',
+                    message: 'This user has restricted who can interact with their account.',
+                    type: 'error'
+                });
+            }
             showToast({
                 message: 'An error occurred while sending your reply.',
                 type: 'error'
