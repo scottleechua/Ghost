@@ -4,12 +4,14 @@
 PLACEHOLDER_NAME=""
 PLACEHOLDER_EMAIL=""
 HIDE_ALREADY_MEMBER=false
+ENABLE_DARK_MODE=false
 
 while [[ "$#" -gt 0 ]]; do
     case $1 in
         --placeholder-name) PLACEHOLDER_NAME="$2"; shift ;;
         --placeholder-email) PLACEHOLDER_EMAIL="$2"; shift ;;
         --hide-already-member) HIDE_ALREADY_MEMBER=true ;;
+        --enable-dark-mode) ENABLE_DARK_MODE=true ;;
         *) break ;;
     esac
     shift
@@ -17,10 +19,11 @@ done
 
 # Check if all required arguments are provided
 if [ "$#" -ne 1 ]; then
-    echo "Usage: $0 [--placeholder-name <name>] [--placeholder-email <email>] [--hide-already-member] <path_to_theme>"
+    echo "Usage: $0 [--placeholder-name <name>] [--placeholder-email <email>] [--hide-already-member] [--enable-dark-mode] <path_to_theme>"
     echo "  --placeholder-name    Set placeholder name (e.g., 'John Doe')"
     echo "  --placeholder-email   Set placeholder email (e.g., 'john@example.com')"
     echo "  --hide-already-member  Hide the 'Already a member?' message"
+    echo "  --enable-dark-mode     Enable dark mode"
     exit 1
 fi
 
@@ -77,6 +80,19 @@ PORTAL_VITE_CONFIG="$GHOST_ROOT/apps/portal/vite.config.js"
 cp "$PORTAL_VITE_CONFIG" "${PORTAL_VITE_CONFIG}.backup"
 # Modify the config to only include English translations
 sed -i '' 's|dynamicRequireTargets: SUPPORTED_LOCALES.map(locale => `../../ghost/i18n/locales/${locale}/portal.json`)|dynamicRequireTargets: ['\''../../ghost/i18n/locales/en/portal.json'\'']|' "$PORTAL_VITE_CONFIG"
+
+# Enable dark mode if flag is set
+if [ "$ENABLE_DARK_MODE" = true ]; then
+    echo "Enabling dark mode..."
+    # Execute the dark mode script
+    DARK_MODE_SCRIPT="$(dirname "$0")/portal-dark-mode.zsh"
+    if [ -f "$DARK_MODE_SCRIPT" ]; then
+        "$DARK_MODE_SCRIPT"
+    else
+        echo "Error: Dark mode script not found at $DARK_MODE_SCRIPT"
+        exit 1
+    fi
+fi
 
 echo "Build started..."
 
