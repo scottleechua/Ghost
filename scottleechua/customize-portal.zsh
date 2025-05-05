@@ -97,26 +97,30 @@ fi
 
 # Hide site title if flag is set
 if [ "$HIDE_SITE_TITLE" = true ]; then
-    echo "Hiding site title..."
-    sed -i '' "/\.gh-portal-main-title {/,/}/s/display: block;/display: none !important;/" "$GHOST_ROOT/apps/portal/src/components/Frame.styles.js"
+    echo "Removing site title on Signin and Signup pages..."
+    
+    # Delete only the h1 element after renderSiteIcon() in SignupPage.js
+    sed -i '' '/{this.renderSiteIcon()}/,/<\/h1>/ {/<\/h1>/d;}' "$GHOST_ROOT/apps/portal/src/components/pages/SignupPage.js"
+    
+    # Find renderSiteTitle() and delete the h1 element if it exists within 10 lines in SigninPage.js
+    sed -i '' '/renderSiteTitle() {/,+10 {/^\s*<h1 className='\''gh-portal-main-title'\''>{siteTitle}<\/h1>/d;}' "$GHOST_ROOT/apps/portal/src/components/pages/SigninPage.js"
+
+    # Delete padding and margin from signup header
+    sed -i '' '/padding: 0 32px;/,/margin-bottom: 32px;/d' "$GHOST_ROOT/apps/portal/src/components/pages/SignupPage.js"
+
+    # Modify margin in Frame.styles.js
+    sed -i '' '/\.gh-portal-newsletter-selection {/,+2 s/margin:.*;/margin: 12px auto;/' "$GHOST_ROOT/apps/portal/src/components/Frame.styles.js"
 fi
 
 # Replace icon with logo if flag is set
 if [ "$REPLACE_ICON_WITH_LOGO" = true ]; then
-    echo "Replacing icon with logo..."
-    sed -i '' 's/SiteIcon/SiteLogo/g' "$GHOST_ROOT/apps/portal/src/components/pages/SignupPage.js"
-    sed -i '' 's/siteIcon/siteLogo/g' "$GHOST_ROOT/apps/portal/src/components/pages/SignupPage.js"
-    sed -i '' 's/site.icon/site.logo/g' "$GHOST_ROOT/apps/portal/src/components/pages/SignupPage.js"
-
-    sed -i '' 's/SiteIcon/SiteLogo/g' "$GHOST_ROOT/apps/portal/src/components/pages/SigninPage.js"
-    sed -i '' 's/siteIcon/siteLogo/g' "$GHOST_ROOT/apps/portal/src/components/pages/SigninPage.js"
-    sed -i '' 's/site.icon/site.logo/g' "$GHOST_ROOT/apps/portal/src/components/pages/SigninPage.js"
-
-    # Capture the style block for the logo
-    ORIGINAL_WIDTH=$(grep -A 1 '\.gh-portal-signup-logo {' "$GHOST_ROOT/apps/portal/src/components/pages/SignupPage.js" | grep 'width:' | sed 's/.*width: \([^;]*\);.*/\1/')
-
-    # Remove width = 60px constraint
-    sed -i '' "/\.gh-portal-signup-logo {/,/}/s/width: $ORIGINAL_WIDTH;//" "$GHOST_ROOT/apps/portal/src/components/pages/SignupPage.js"
+    REPLACE_ICON_SCRIPT="$(dirname "$0")/portal-replace-icon-with-logo.zsh"
+    if [ -f "$REPLACE_ICON_SCRIPT" ]; then
+        "$REPLACE_ICON_SCRIPT"
+    else
+        echo "Error: Replace icon script not found at $REPLACE_ICON_SCRIPT"
+        exit 1
+    fi
 fi
 
 # Enable dark mode if flag is set
@@ -133,7 +137,6 @@ if [ "$ENABLE_DARK_MODE" = true ]; then
 
     # Apply custom accents if provided
     if [ ${#CUSTOM_ACCENTS[@]} -eq 4 ]; then
-        echo "Applying custom accents..."
         CUSTOM_ACCENTS_SCRIPT="$(dirname "$0")/portal-custom-accents.zsh"
         if [ -f "$CUSTOM_ACCENTS_SCRIPT" ]; then
             "$CUSTOM_ACCENTS_SCRIPT" "${CUSTOM_ACCENTS[1]}" "${CUSTOM_ACCENTS[2]}" "${CUSTOM_ACCENTS[3]}" "${CUSTOM_ACCENTS[4]}"
@@ -178,7 +181,7 @@ echo "Cleaning up changes..."
 rm -f "${PORTAL_VITE_CONFIG}.backup"
 
 # Restore all modified files to their original state using Git
-# (cd "$GHOST_ROOT/apps/portal" && git restore .)
+(cd "$GHOST_ROOT/apps/portal" && git restore .)
 
 echo "Done!"
 echo ""

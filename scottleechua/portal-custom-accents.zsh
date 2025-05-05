@@ -88,9 +88,10 @@ if grep -A 10 "const Styles = ({brandColor, disabled, style = {}, isPrimary}) =>
     }" "$GHOST_ROOT/apps/portal/src/components/common/ActionButton.js"
 fi
 
+# Modify background in Switch.js
+sed -i '' '/\.gh-portal-for-switch input:checked \+ .input-toggle-component {/,+1 s/background:.*;/background: var(--portal-primary-accent);/' "$GHOST_ROOT/apps/portal/src/components/common/Switch.js"
+
 # Clean up temporary files
 rm "$LIGHT_ACCENTS_FILE"
 rm "$DARK_ACCENTS_FILE"
 rm "$LINK_STYLE_FILE"
-
-echo "Custom accents applied successfully!"

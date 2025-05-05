@@ -78,5 +78,3 @@ mv "$TEMP_GLOBAL_STYLES" "$GLOBAL_STYLES_PATH"
 # Clean up temporary files
 rm "$TOGGLE_DARK_FILE"
 rm "$DARK_STYLES_FILE"
-
-echo "Dark mode changes applied successfully!" 
