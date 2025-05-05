@@ -77,8 +77,9 @@ sed -i '' '/initStatus: '\''success'\'',/a\
         invertColor: this.props.invertColor || '\''#999'\'',\
 ' "$GHOST_ROOT/apps/portal/src/App.js"
 
-# Add getInvertColor method
-sed -i '' '/getAccentColor() {/a\
+# Add getInvertColor method after getAccentColor method
+sed -i '' '/getAccentColor() {/,/return accentColor;/a\
+\
 getInvertColor() {\
     const {accent_color: accentColor} = this.state.site || {};\
 \
