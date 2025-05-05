@@ -85,24 +85,15 @@ The script can be run from any directory by using its full path:
 
 ## Syncing with main Ghost repo
 
-**Might just be a case of syncing `develop` branch directly!**
-
-1. On GitHub, sync `upstream` branch.
+1, On GitHub, `Sync fork` on the `develop` branch.
 2. On local:
     ```bash
     git fetch && git pull
-    git merge upstream develop
     ```
-3. In case of merge conflicts, prefer to overwrite `develop` with the incoming file. For instance, to overwrite `yarn.lock`, run:
-    ```bash
-    git checkout upstream -- yarn.lock
-    ```
-4. Commit and push.
 
 ## Guidelines
-- Pull changes from upstream before generating new versions of files.
-- Only make changes in `develop` branch; the `main` branch is there for reference.
-- Only make changes in `scottleechua/` folder unless absolutely necessary.
+- Only make changes in `develop` branch; the `upstream` branch is mainly there for reference.
+- Only make changes in `scottleechua/` folder.
 
 ## Resources
 - [Ghost developer setup](https://ghost.org/docs/install/source/)
