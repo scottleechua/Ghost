@@ -4,14 +4,23 @@
 PLACEHOLDER_NAME=""
 PLACEHOLDER_EMAIL=""
 HIDE_ALREADY_MEMBER=false
+HIDE_SITE_TITLE=false
+REPLACE_ICON_WITH_LOGO=false
 ENABLE_DARK_MODE=false
+CUSTOM_ACCENTS=()
 
 while [[ "$#" -gt 0 ]]; do
     case $1 in
         --placeholder-name) PLACEHOLDER_NAME="$2"; shift ;;
         --placeholder-email) PLACEHOLDER_EMAIL="$2"; shift ;;
         --hide-already-member) HIDE_ALREADY_MEMBER=true ;;
+        --hide-site-title) HIDE_SITE_TITLE=true ;;
+        --replace-icon-with-logo) REPLACE_ICON_WITH_LOGO=true ;;
         --enable-dark-mode) ENABLE_DARK_MODE=true ;;
+        --custom-accents)
+            CUSTOM_ACCENTS=("$2" "$3" "$4" "$5")
+            shift 4
+            ;;
         *) break ;;
     esac
     shift
@@ -19,11 +28,24 @@ done
 
 # Check if all required arguments are provided
 if [ "$#" -ne 1 ]; then
-    echo "Usage: $0 [--placeholder-name <name>] [--placeholder-email <email>] [--hide-already-member] [--enable-dark-mode] <path_to_theme>"
+    echo "Usage: $0 [--placeholder-name <name>] [--placeholder-email <email>] [--hide-already-member] [--hide-site-title] [--replace-icon-with-logo] [--enable-dark-mode] [--custom-accents <primary_light> <secondary_light> <primary_dark> <secondary_dark>] <path_to_theme>"
     echo "  --placeholder-name    Set placeholder name (e.g., 'John Doe')"
     echo "  --placeholder-email   Set placeholder email (e.g., 'john@example.com')"
     echo "  --hide-already-member  Hide the 'Already a member?' message"
+    echo "  --hide-site-title     Hide the site title in the portal"
+    echo "  --replace-icon-with-logo  Replace the site icon in the portal with the site logo"
     echo "  --enable-dark-mode     Enable dark mode"
+    echo "  --custom-accents       Set custom accent colors"
+    echo "                         <primary_light>   Primary accent color for light mode (e.g., '#ff0000')"
+    echo "                         <secondary_light> Secondary accent color for light mode (e.g., '#00ff00')"
+    echo "                         <primary_dark>    Primary accent color for dark mode (e.g., '#ff0000')"
+    echo "                         <secondary_dark>  Secondary accent color for dark mode (e.g., '#00ff00')"
+    exit 1
+fi
+
+# Check if custom accents are provided without dark mode
+if [ ${#CUSTOM_ACCENTS[@]} -eq 4 ] && [ "$ENABLE_DARK_MODE" != true ]; then
+    echo "Error: Custom accents can only be applied when dark mode is enabled"
     exit 1
 fi
 
@@ -73,13 +95,29 @@ if [ "$HIDE_ALREADY_MEMBER" = true ]; then
     sed -i '' "/\.gh-portal-signup-message {/,/}/s/display: $ORIGINAL_DISPLAY;/display: none !important;/g" "$GHOST_ROOT/apps/portal/src/components/pages/SignupPage.js"
 fi
 
-# Temporarily modify portal's vite.config.js to only include English translations
-echo "Modifying portal's vite.config.js to use English-only translations..."
-PORTAL_VITE_CONFIG="$GHOST_ROOT/apps/portal/vite.config.js"
-# Create a backup of the original config
-cp "$PORTAL_VITE_CONFIG" "${PORTAL_VITE_CONFIG}.backup"
-# Modify the config to only include English translations
-sed -i '' 's|dynamicRequireTargets: SUPPORTED_LOCALES.map(locale => `../../ghost/i18n/locales/${locale}/portal.json`)|dynamicRequireTargets: ['\''../../ghost/i18n/locales/en/portal.json'\'']|' "$PORTAL_VITE_CONFIG"
+# Hide site title if flag is set
+if [ "$HIDE_SITE_TITLE" = true ]; then
+    echo "Hiding site title..."
+    sed -i '' "/\.gh-portal-main-title {/,/}/s/display: block;/display: none !important;/" "$GHOST_ROOT/apps/portal/src/components/Frame.styles.js"
+fi
+
+# Replace icon with logo if flag is set
+if [ "$REPLACE_ICON_WITH_LOGO" = true ]; then
+    echo "Replacing icon with logo..."
+    sed -i '' 's/SiteIcon/SiteLogo/g' "$GHOST_ROOT/apps/portal/src/components/pages/SignupPage.js"
+    sed -i '' 's/siteIcon/siteLogo/g' "$GHOST_ROOT/apps/portal/src/components/pages/SignupPage.js"
+    sed -i '' 's/site.icon/site.logo/g' "$GHOST_ROOT/apps/portal/src/components/pages/SignupPage.js"
+
+    sed -i '' 's/SiteIcon/SiteLogo/g' "$GHOST_ROOT/apps/portal/src/components/pages/SigninPage.js"
+    sed -i '' 's/siteIcon/siteLogo/g' "$GHOST_ROOT/apps/portal/src/components/pages/SigninPage.js"
+    sed -i '' 's/site.icon/site.logo/g' "$GHOST_ROOT/apps/portal/src/components/pages/SigninPage.js"
+
+    # Capture the style block for the logo
+    ORIGINAL_WIDTH=$(grep -A 1 '\.gh-portal-signup-logo {' "$GHOST_ROOT/apps/portal/src/components/pages/SignupPage.js" | grep 'width:' | sed 's/.*width: \([^;]*\);.*/\1/')
+
+    # Remove width = 60px constraint
+    sed -i '' "/\.gh-portal-signup-logo {/,/}/s/width: $ORIGINAL_WIDTH;//" "$GHOST_ROOT/apps/portal/src/components/pages/SignupPage.js"
+fi
 
 # Enable dark mode if flag is set
 if [ "$ENABLE_DARK_MODE" = true ]; then
@@ -92,7 +130,27 @@ if [ "$ENABLE_DARK_MODE" = true ]; then
         echo "Error: Dark mode script not found at $DARK_MODE_SCRIPT"
         exit 1
     fi
+
+    # Apply custom accents if provided
+    if [ ${#CUSTOM_ACCENTS[@]} -eq 4 ]; then
+        echo "Applying custom accents..."
+        CUSTOM_ACCENTS_SCRIPT="$(dirname "$0")/portal-custom-accents.zsh"
+        if [ -f "$CUSTOM_ACCENTS_SCRIPT" ]; then
+            "$CUSTOM_ACCENTS_SCRIPT" "${CUSTOM_ACCENTS[1]}" "${CUSTOM_ACCENTS[2]}" "${CUSTOM_ACCENTS[3]}" "${CUSTOM_ACCENTS[4]}"
+        else
+            echo "Error: Custom accents script not found at $CUSTOM_ACCENTS_SCRIPT"
+            exit 1
+        fi
+    fi
 fi
+
+# Temporarily modify portal's vite.config.js to only include English translations
+echo "Modifying portal's vite.config.js to use English-only translations..."
+PORTAL_VITE_CONFIG="$GHOST_ROOT/apps/portal/vite.config.js"
+# Create a backup of the original config
+cp "$PORTAL_VITE_CONFIG" "${PORTAL_VITE_CONFIG}.backup"
+# Modify the config to only include English translations
+sed -i '' 's|dynamicRequireTargets: SUPPORTED_LOCALES.map(locale => `../../ghost/i18n/locales/${locale}/portal.json`)|dynamicRequireTargets: ['\''../../ghost/i18n/locales/en/portal.json'\'']|' "$PORTAL_VITE_CONFIG"
 
 echo "Build started..."
 
@@ -120,7 +178,7 @@ echo "Cleaning up changes..."
 rm -f "${PORTAL_VITE_CONFIG}.backup"
 
 # Restore all modified files to their original state using Git
-(cd "$GHOST_ROOT/apps/portal" && git restore .)
+# (cd "$GHOST_ROOT/apps/portal" && git restore .)
 
 echo "Done!"
 echo ""

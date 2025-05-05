@@ -57,20 +57,36 @@ EOL
 sed -i '' -e "/:root {/r $LIGHT_ACCENTS_FILE" "$GHOST_ROOT/apps/portal/src/components/Global.styles.js"
 sed -i '' -e "/html.dark {/r $DARK_ACCENTS_FILE" "$GHOST_ROOT/apps/portal/src/components/Global.styles.js"
 
-# Comment out style={{color: brandColor}} in SignupPage.js
-sed -i '' -e 's/style={{color: brandColor}}/\/\/ style={{color: brandColor}}/' "$GHOST_ROOT/apps/portal/src/components/pages/SignupPage.js"
+# Delete style={{color: brandColor}} line in SignupPage.js if it appears within 10 lines after the button with className='gh-portal-btn gh-portal-btn-link'
+if grep -A 10 "className='gh-portal-btn gh-portal-btn-link'" "$GHOST_ROOT/apps/portal/src/components/pages/SignupPage.js" | grep -q "style={{color: brandColor}}"; then
+    sed -i '' -e "/className='gh-portal-btn gh-portal-btn-link'/,+10 {
+        /style={{color: brandColor}}/d
+    }" "$GHOST_ROOT/apps/portal/src/components/pages/SignupPage.js"
+fi
 
-# Comment out style={{color: brandColor}} in SigninPage.js
-sed -i '' -e 's/style={{color: brandColor}}/\/\/ style={{color: brandColor}}/' "$GHOST_ROOT/apps/portal/src/components/pages/SigninPage.js"
+# Delete style={{color: brandColor}} line in SigninPage.js if it appears within 10 lines after the button with className='gh-portal-btn gh-portal-btn-link'
+if grep -A 10 "className='gh-portal-btn gh-portal-btn-link'" "$GHOST_ROOT/apps/portal/src/components/pages/SigninPage.js" | grep -q "style={{color: brandColor}}"; then
+    sed -i '' -e "/className='gh-portal-btn gh-portal-btn-link'/,+10 {
+        /style={{color: brandColor}}/d
+    }" "$GHOST_ROOT/apps/portal/src/components/pages/SigninPage.js"
+fi
 
 # Add link style to .gh-portal-signup-terms-content p in SignupPage.js
 sed -i '' -e "/\.gh-portal-signup-terms-content p {/r $LINK_STYLE_FILE" "$GHOST_ROOT/apps/portal/src/components/pages/SignupPage.js"
 
 # Replace backgroundColor line in ActionButton.js
-sed -i '' -e 's/let backgroundColor = .*/let backgroundColor = '\''var(--portal-primary-accent)'\'';/' "$GHOST_ROOT/apps/portal/src/components/common/ActionButton.js"
+if grep -A 10 "const Styles = ({brandColor, disabled, style = {}, isPrimary}) => {" "$GHOST_ROOT/apps/portal/src/components/common/ActionButton.js" | grep -q "let backgroundColor ="; then
+    sed -i '' -e "/const Styles = ({brandColor, disabled, style = {}, isPrimary}) => {/,+10 {
+        /let backgroundColor =/s/let backgroundColor = .*/let backgroundColor = 'var(--portal-primary-accent)';/
+    }" "$GHOST_ROOT/apps/portal/src/components/common/ActionButton.js"
+fi
 
 # Replace textColor line in ActionButton.js
-sed -i '' -e 's/const textColor = '\''#fff'\'';/const textColor = '\''var(--portal-secondary-accent)'\'';/' "$GHOST_ROOT/apps/portal/src/components/common/ActionButton.js"
+if grep -A 10 "const Styles = ({brandColor, disabled, style = {}, isPrimary}) => {" "$GHOST_ROOT/apps/portal/src/components/common/ActionButton.js" | grep -q "const textColor ="; then
+    sed -i '' -e "/const Styles = ({brandColor, disabled, style = {}, isPrimary}) => {/,+10 {
+        /const textColor =/s/const textColor = .*/const textColor = 'var(--portal-secondary-accent)';/
+    }" "$GHOST_ROOT/apps/portal/src/components/common/ActionButton.js"
+fi
 
 # Clean up temporary files
 rm "$LIGHT_ACCENTS_FILE"
