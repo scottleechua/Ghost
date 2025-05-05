@@ -21,8 +21,8 @@ cd "$GHOST_ROOT/apps/portal"
 echo "Applying dark mode changes..."
 
 # Create a temporary file with the dark mode code
-TEMP_FILE=$(mktemp)
-cat > "$TEMP_FILE" << 'EOL'
+TOGGLE_DARK_FILE=$(mktemp)
+cat > "$TOGGLE_DARK_FILE" << 'EOL'
         let isParentDark = false;
         const pageBody = window.parent.document.body;
         if (pageBody && pageBody.classList) {
@@ -59,11 +59,11 @@ cat > "$DARK_STYLES_FILE" << 'EOL'
 EOL
 
 # Edit PopupModal.js to add dark mode detection
-sed -i '' -e "/const isMobile = window.innerWidth < 480;/r $TEMP_FILE" "$GHOST_ROOT/apps/portal/src/components/PopupModal.js"
+sed -i '' -e "/const isMobile = window.innerWidth < 480;/r $TOGGLE_DARK_FILE" "$GHOST_ROOT/apps/portal/src/components/PopupModal.js"
 sed -i '' -e "s/dataDir={this.context.dir}/dataDir={this.context.dir}\n                    dataDark={isParentDark}/" "$GHOST_ROOT/apps/portal/src/components/PopupModal.js"
 
 # Edit Notification.js to add dark mode detection
-sed -i '' -e "/const {type, status, autoHide, duration} = this.state;/r $TEMP_FILE" "$GHOST_ROOT/apps/portal/src/components/Notification.js"
+sed -i '' -e "/const {type, status, autoHide, duration} = this.state;/r $TOGGLE_DARK_FILE" "$GHOST_ROOT/apps/portal/src/components/Notification.js"
 sed -i '' -e "s/testid=\"portal-notification-frame\"/testid=\"portal-notification-frame\"\n                    dataDark={isParentDark}/" "$GHOST_ROOT/apps/portal/src/components/Notification.js"
 
 # Edit Frame.js to add dark/light class
@@ -76,7 +76,7 @@ awk '/body {/ {system("cat '"$DARK_STYLES_FILE"'"); print; next} {print}' "$GLOB
 mv "$TEMP_GLOBAL_STYLES" "$GLOBAL_STYLES_PATH"
 
 # Clean up temporary files
-rm "$TEMP_FILE"
+rm "$TOGGLE_DARK_FILE"
 rm "$DARK_STYLES_FILE"
 
 echo "Dark mode changes applied successfully!" 
