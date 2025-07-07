@@ -85,7 +85,7 @@ The script can be run from any directory by using its full path:
 
 ## Updating dependencies inside portal or sodo-search
 
-1. `cd` to the relevant subfolder.
+1. `cd apps/portal` or `cd apps/sodo-search`.
 2. Run: 
     ```bash
     yarn --cwd install
