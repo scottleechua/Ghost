@@ -95,7 +95,7 @@ The script can be run from any directory by using its full path:
 
 1, On GitHub, `Sync fork` on the `develop` branch.
 2. On local:
-    ```bash
+    ```
     git fetch && git pull
     ```
 
