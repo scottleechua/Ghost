@@ -4,7 +4,6 @@ import {
     type AccountSearchResult,
     ActivityPubAPI,
     ActivityPubCollectionResponse,
-    FollowAccount,
     type GetAccountFollowsResponse,
     type Notification,
     type Post,
@@ -20,11 +19,10 @@ import {
     useQuery,
     useQueryClient
 } from '@tanstack/react-query';
-import {exploreSites} from '@src/lib/explore-sites';
 import {formatPendingActivityContent, generatePendingActivity, generatePendingActivityId} from '../utils/pending-activity';
 import {mapPostToActivity} from '../utils/posts';
 import {toast} from 'sonner';
-import {useCallback, useEffect, useState} from 'react';
+import {useCallback, useEffect, useMemo, useState} from 'react';
 
 export type ActivityPubCollectionQueryResult<TData> = UseInfiniteQueryResult<ActivityPubCollectionResponse<TData>>;
 export type AccountFollowsQueryResult = UseInfiniteQueryResult<GetAccountFollowsResponse>;
@@ -152,6 +150,106 @@ function updateLikeCache(queryClient: QueryClient, handle: string, id: string, l
             }
         }
     }
+}
+
+function updateFollowCache(queryClient: QueryClient, handle: string, authorHandle: string, followedByMe: boolean) {
+    const queryKeys = [
+        QUERY_KEYS.feed,
+        QUERY_KEYS.inbox,
+        QUERY_KEYS.profilePosts('index')
+    ];
+
+    // Add handle-specific profile posts if different from index
+    if (handle !== 'index') {
+        queryKeys.push(QUERY_KEYS.profilePosts(handle));
+    }
+
+    const preferredUsername = authorHandle.split('@')[1];
+
+    for (const queryKey of queryKeys) {
+        queryClient.setQueriesData(queryKey, (current?: {pages: {posts: Activity[]}[]}) => {
+            if (current === undefined) {
+                return current;
+            }
+
+            return {
+                ...current,
+                pages: current.pages.map((page: {posts: Activity[]}) => {
+                    return {
+                        ...page,
+                        posts: page.posts.map((item: Activity) => {
+                            // Update regular posts by this author
+                            if (item.type !== 'Announce' && item.actor?.preferredUsername === preferredUsername) {
+                                return {
+                                    ...item,
+                                    actor: {
+                                        ...item.actor,
+                                        followedByMe: followedByMe
+                                    }
+                                };
+                            }
+
+                            // Update reposts where the original author is being followed/unfollowed
+                            if (item.type === 'Announce' &&
+                                typeof item.object.attributedTo === 'object' &&
+                                item.object.attributedTo &&
+                                !Array.isArray(item.object.attributedTo) &&
+                                'preferredUsername' in item.object.attributedTo &&
+                                item.object.attributedTo.preferredUsername === preferredUsername) {
+                                return {
+                                    ...item,
+                                    object: {
+                                        ...item.object,
+                                        attributedTo: {
+                                            ...item.object.attributedTo,
+                                            followedByMe: followedByMe
+                                        }
+                                    }
+                                };
+                            }
+
+                            return item;
+                        })
+                    };
+                })
+            };
+        });
+    }
+
+    // Handle reply chain cache (used by Note.tsx and Reader.tsx)
+    const replyChainQueryKey = QUERY_KEYS.replyChain(null);
+    queryClient.setQueriesData(replyChainQueryKey, (current?: ReplyChainResponse) => {
+        if (!current) {
+            return current;
+        }
+
+        const updatePost = (post: Post) => {
+            if (post.author.handle === authorHandle) {
+                return {
+                    ...post,
+                    author: {
+                        ...post.author,
+                        followedByMe: followedByMe
+                    }
+                };
+            }
+            return post;
+        };
+
+        return {
+            ...current,
+            post: updatePost(current.post),
+            ancestors: {
+                ...current.ancestors,
+                chain: current.ancestors.chain.map(updatePost)
+            },
+            children: current.children.map(child => ({
+                ...child,
+                post: updatePost(child.post),
+                chain: child.chain.map(updatePost)
+            }))
+        };
+    });
 }
 
 // Update non-paginated caches (should only be called once per mutation)
@@ -847,22 +945,68 @@ export function useUnfollowMutationForUser(handle: string, onSuccess: () => void
                 };
             });
 
-            // Remove the unfollowed actor from the follows query cache for the account performing the unfollow
+            // Invalidate the follows query cache for the account performing the unfollow
             const accountFollowsQueryKey = QUERY_KEYS.accountFollows(handle, 'following');
+            queryClient.invalidateQueries({queryKey: accountFollowsQueryKey});
 
-            queryClient.setQueryData(accountFollowsQueryKey, (currentFollows?: {pages: {accounts: FollowAccount[]}[]}) => {
-                if (!currentFollows) {
-                    return currentFollows;
+            // Update explore profiles cache
+            queryClient.setQueryData(QUERY_KEYS.exploreProfiles(handle), (current: {pages: Array<{results: Record<string, { categoryName: string; sites: Account[] }>}>} | undefined) => {
+                if (!current) {
+                    return current;
                 }
 
-                return {
-                    ...currentFollows,
-                    pages: currentFollows.pages.map(page => ({
+                const updatedPages = current.pages.map((page) => {
+                    const updatedResults = Object.entries(page.results).reduce((acc, [categoryKey, category]) => {
+                        const updatedSites = category.sites.map((profile) => {
+                            if (profile.handle === fullHandle) {
+                                return {
+                                    ...profile,
+                                    followedByMe: false,
+                                    followerCount: Math.max(0, profile.followerCount - 1)
+                                };
+                            }
+                            return profile;
+                        });
+
+                        acc[categoryKey] = {
+                            ...category,
+                            sites: updatedSites
+                        };
+
+                        return acc;
+                    }, {} as Record<string, { categoryName: string; sites: Account[] }>);
+
+                    return {
                         ...page,
-                        data: page.accounts.filter(account => account.handle !== fullHandle)
-                    }))
+                        results: updatedResults
+                    };
+                });
+
+                return {
+                    ...current,
+                    pages: updatedPages
                 };
             });
+
+            // Update suggested profiles cache (for all limit values)
+            queryClient.setQueriesData({queryKey: ['suggested_profiles_json'], exact: false}, (current: Account[] | undefined) => {
+                if (!current) {
+                    return current;
+                }
+
+                return current.map((profile) => {
+                    if (profile.handle === fullHandle) {
+                        return {
+                            ...profile,
+                            followedByMe: false,
+                            followerCount: Math.max(0, profile.followerCount - 1)
+                        };
+                    }
+                    return profile;
+                });
+            });
+
+            updateFollowCache(queryClient, handle, fullHandle, false);
 
             onSuccess();
         },
@@ -919,6 +1063,63 @@ export function useFollowMutationForUser(handle: string, onSuccess: () => void, 
 
             queryClient.invalidateQueries({queryKey: accountFollowsQueryKey});
 
+            // Update explore profiles cache
+            queryClient.setQueryData(QUERY_KEYS.exploreProfiles(handle), (current: {pages: Array<{results: Record<string, { categoryName: string; sites: Account[] }>}>} | undefined) => {
+                if (!current) {
+                    return current;
+                }
+
+                const updatedPages = current.pages.map((page) => {
+                    const updatedResults = Object.entries(page.results).reduce((acc, [categoryKey, category]) => {
+                        const updatedSites = category.sites.map((profile) => {
+                            if (profile.handle === fullHandle) {
+                                return {
+                                    ...profile,
+                                    followedByMe: true,
+                                    followerCount: profile.followerCount + 1
+                                };
+                            }
+                            return profile;
+                        });
+
+                        acc[categoryKey] = {
+                            ...category,
+                            sites: updatedSites
+                        };
+
+                        return acc;
+                    }, {} as Record<string, { categoryName: string; sites: Account[] }>);
+
+                    return {
+                        ...page,
+                        results: updatedResults
+                    };
+                });
+
+                return {
+                    ...current,
+                    pages: updatedPages
+                };
+            });
+
+            // Update suggested profiles cache (for all limit values)
+            queryClient.setQueriesData({queryKey: ['suggested_profiles_json'], exact: false}, (current: Account[] | undefined) => {
+                if (!current) {
+                    return current;
+                }
+
+                return current.map((profile) => {
+                    if (profile.handle === fullHandle) {
+                        return {
+                            ...profile,
+                            followedByMe: true,
+                            followerCount: profile.followerCount + 1
+                        };
+                    }
+                    return profile;
+                });
+            });
+
             // Add new follower to the followers list cache
             queryClient.setQueryData(profileFollowersQueryKey, (oldData?: {
                 pages: Array<{
@@ -967,6 +1168,8 @@ export function useFollowMutationForUser(handle: string, onSuccess: () => void, 
                     }, ...oldData.pages.slice(1)]
                 };
             });
+
+            updateFollowCache(queryClient, handle, fullHandle, true);
 
             onSuccess();
         },
@@ -1019,170 +1222,6 @@ export function useSearchForUser(handle: string, query: string) {
     };
 
     return {searchQuery, updateAccountSearchResult};
-}
-
-export function useExploreProfilesForUser(handle: string) {
-    const queryClient = useQueryClient();
-    const queryKey = QUERY_KEYS.exploreProfiles(handle);
-
-    const fetchExploreProfiles = useCallback(async ({pageParam = 0}: {pageParam?: number}) => {
-        const siteUrl = await getSiteUrl();
-        const api = createActivityPubAPI(handle, siteUrl);
-
-        // Collect all handles with their category info
-        const allHandles = Object.entries(exploreSites).flatMap(([key, category]) => category.sites.map(profileHandle => ({
-            key,
-            categoryName: category.categoryName,
-            profileHandle
-        })));
-
-        // Calculate pagination
-        const pageSize = 10; // Number of profiles per page
-        const startIndex = pageParam * pageSize;
-        const endIndex = startIndex + pageSize;
-
-        // Ensure we don't go beyond the total number of handles
-        if (startIndex >= allHandles.length) {
-            return {
-                results: {},
-                nextPage: undefined
-            };
-        }
-
-        const paginatedHandles = allHandles.slice(startIndex, endIndex);
-
-        // Fetch profiles for current page
-        const allResults = await Promise.allSettled(
-            paginatedHandles.map(item => api.getAccount(item.profileHandle)
-                .then(profile => ({...item, profile}))
-            )
-        );
-
-        // Organize results back into categories
-        const results: Record<string, { categoryName: string; sites: Account[] }> = {};
-
-        allResults
-            .filter((result): result is PromiseFulfilledResult<typeof allHandles[0] & { profile: Account }> => result.status === 'fulfilled'
-            )
-            .forEach((result) => {
-                const {key, categoryName, profile} = result.value;
-
-                if (!results[key]) {
-                    results[key] = {categoryName, sites: []};
-                }
-
-                results[key].sites.push(profile);
-            });
-
-        return {
-            results,
-            nextPage: endIndex < allHandles.length ? pageParam + 1 : undefined
-        };
-    }, [handle]);
-
-    const exploreProfilesQuery = useInfiniteQuery({
-        queryKey,
-        queryFn: ({pageParam = 0}) => fetchExploreProfiles({pageParam}),
-        getNextPageParam: lastPage => lastPage.nextPage
-    });
-
-    const updateExploreProfile = (id: string, updated: Partial<Account>) => {
-        queryClient.setQueryData(queryKey, (current: {pages: Array<{results: Record<string, { categoryName: string; sites: Account[] }>}>} | undefined) => {
-            if (!current) {
-                return current;
-            }
-
-            // Create a new pages array with updated profiles
-            const updatedPages = current.pages.map((page) => {
-                // Create a new results object with updated categories
-                const updatedResults = Object.entries(page.results).reduce((acc, [categoryKey, category]) => {
-                    // Update the sites array for this category
-                    const updatedSites = category.sites.map((profile) => {
-                        if (profile.id === id) {
-                            return {...profile, ...updated};
-                        }
-                        return profile;
-                    });
-
-                    // Add the updated category to the results
-                    acc[categoryKey] = {
-                        ...category,
-                        sites: updatedSites
-                    };
-
-                    return acc;
-                }, {} as Record<string, { categoryName: string; sites: Account[] }>);
-
-                return {
-                    ...page,
-                    results: updatedResults
-                };
-            });
-
-            return {
-                ...current,
-                pages: updatedPages
-            };
-        });
-    };
-
-    return {
-        exploreProfilesQuery,
-        updateExploreProfile
-    };
-}
-
-export function useSuggestedProfilesForUser(handle: string, limit = 3) {
-    const queryClient = useQueryClient();
-    const queryKey = QUERY_KEYS.suggestedProfiles(handle, limit);
-
-    const suggestedHandles = Object.values(exploreSites).flatMap(category => category.sites);
-
-    const suggestedProfilesQuery = useQuery({
-        queryKey,
-        async queryFn() {
-            const siteUrl = await getSiteUrl();
-            const api = createActivityPubAPI(handle, siteUrl);
-
-            // Get more handles than we need initially, since some might be filtered out as blocked
-            const fetchLimit = Math.min(limit * 2, suggestedHandles.length);
-
-            return Promise.allSettled(
-                suggestedHandles
-                    .sort(() => Math.random() - 0.5)
-                    .slice(0, fetchLimit)
-                    .map(suggestedHandle => api.getAccount(suggestedHandle))
-            ).then((results) => {
-                const accounts = results
-                    .filter((result): result is PromiseFulfilledResult<Account> => result.status === 'fulfilled')
-                    .map(result => result.value)
-                    // Filter out blocked accounts
-                    .filter(account => !account.blockedByMe && !account.domainBlockedByMe);
-
-                // Return only the requested limit of accounts after filtering
-                return accounts.slice(0, limit);
-            });
-        }
-    });
-
-    const updateSuggestedProfile = (id: string, updated: Partial<Account>) => {
-        // Update the suggested profiles stored in the suggested profiles query cache
-        queryClient.setQueryData(queryKey, (current: Account[] | undefined) => {
-            if (!current) {
-                return current;
-            }
-
-            return current.map((item: Account) => {
-                if (item.id === id) {
-                    return {...item, ...updated};
-                }
-
-                return item;
-            });
-        });
-    };
-
-    return {suggestedProfilesQuery, updateSuggestedProfile};
 }
 
 function prependActivityToPaginatedCollection(
@@ -1279,11 +1318,12 @@ export function useReplyMutationForUser(handle: string, actorProps?: ActorProper
     const queryClient = useQueryClient();
 
     return useMutation({
-        async mutationFn({inReplyTo, content, imageUrl}: {inReplyTo: string, content: string, imageUrl?: string}) {
+        async mutationFn({inReplyTo, content, imageUrl, altText}: {inReplyTo: string, content: string, imageUrl?: string, altText?: string}) {
             const siteUrl = await getSiteUrl();
             const api = createActivityPubAPI(handle, siteUrl);
 
-            return api.reply(inReplyTo, content, imageUrl);
+            const image = imageUrl ? {url: imageUrl, altText} : undefined;
+            return api.reply(inReplyTo, content, image);
         },
         onMutate: ({inReplyTo}) => {
             if (!actorProps) {
@@ -1344,11 +1384,12 @@ export function useNoteMutationForUser(handle: string, actorProps?: ActorPropert
     const queryKeyPostsByAccount = QUERY_KEYS.profilePosts('index');
 
     return useMutation({
-        async mutationFn({content, imageUrl}: {content: string, imageUrl?: string}) {
+        async mutationFn({content, imageUrl, altText}: {content: string, imageUrl?: string, altText?: string}) {
             const siteUrl = await getSiteUrl();
             const api = createActivityPubAPI(handle, siteUrl);
 
-            return api.note(content, imageUrl);
+            const image = imageUrl ? {url: imageUrl, altText} : undefined;
+            return api.note(content, image);
         },
         onMutate: ({content, imageUrl}) => {
             if (!actorProps) {
@@ -2114,4 +2155,254 @@ export function useResetNotificationsCountForUser(handle: string) {
             return activityPubAPI.resetNotificationsCount();
         }
     });
+}
+
+function useFilteredAccountsFromJSON(options: {
+    excludeFollowing?: boolean;
+    excludeCurrentUser?: boolean;
+} = {}) {
+    const {
+        excludeFollowing = true,
+        excludeCurrentUser = false
+    } = options;
+    const {data: followingData, hasNextPage, fetchNextPage, isLoading: isLoadingFollowing} = useAccountFollowsForUser('me', 'following');
+    const {data: blockedAccountsData, hasNextPage: hasNextBlockedAccounts, fetchNextPage: fetchNextBlockedAccounts, isLoading: isLoadingBlockedAccounts} = useBlockedAccountsForUser('me');
+    const {data: blockedDomainsData, hasNextPage: hasNextBlockedDomains, fetchNextPage: fetchNextBlockedDomains, isLoading: isLoadingBlockedDomains} = useBlockedDomainsForUser('me');
+    const currentAccountQuery = useAccountForUser('index', 'me');
+    const {data: currentUser, isLoading: isLoadingCurrentUser} = currentAccountQuery;
+
+    useEffect(() => {
+        if (hasNextPage && !isLoadingFollowing) {
+            fetchNextPage();
+        }
+    }, [hasNextPage, fetchNextPage, isLoadingFollowing, followingData?.pages]);
+
+    useEffect(() => {
+        if (hasNextBlockedAccounts && !isLoadingBlockedAccounts) {
+            fetchNextBlockedAccounts();
+        }
+    }, [hasNextBlockedAccounts, fetchNextBlockedAccounts, isLoadingBlockedAccounts, blockedAccountsData?.pages]);
+
+    useEffect(() => {
+        if (hasNextBlockedDomains && !isLoadingBlockedDomains) {
+            fetchNextBlockedDomains();
+        }
+    }, [hasNextBlockedDomains, fetchNextBlockedDomains, isLoadingBlockedDomains, blockedDomainsData?.pages]);
+
+    const followingIds = useMemo(() => {
+        const ids = new Set<string>();
+        if (followingData?.pages) {
+            followingData.pages.forEach((page) => {
+                page.accounts.forEach((account) => {
+                    ids.add(account.id);
+                });
+            });
+        }
+        return ids;
+    }, [followingData]);
+
+    const blockedAccountIds = useMemo(() => {
+        const ids = new Set<string>();
+        if (blockedAccountsData?.pages) {
+            blockedAccountsData.pages.forEach((page) => {
+                page.accounts?.forEach((account: Account) => {
+                    ids.add(account.id);
+                });
+            });
+        }
+        return ids;
+    }, [blockedAccountsData]);
+
+    const blockedDomains = useMemo(() => {
+        const domains = new Set<string>();
+        if (blockedDomainsData?.pages) {
+            blockedDomainsData.pages.forEach((page) => {
+                page.domains?.forEach((domain: Account | string) => {
+                    if (typeof domain === 'string') {
+                        domains.add(domain);
+                    } else if (domain.url) {
+                        try {
+                            const url = new URL(domain.url);
+                            domains.add(url.hostname);
+                        } catch {
+                            // Ignore invalid URLs
+                        }
+                    }
+                });
+            });
+        }
+        return domains;
+    }, [blockedDomainsData]);
+
+    const fetchAndFilterAccounts = useCallback(async () => {
+        try {
+            const response = await fetch('https://storage.googleapis.com/prd-activitypub-populate-explore-json/explore/accounts.json');
+            if (!response.ok) {
+                throw new Error('Failed to fetch explore accounts');
+            }
+
+            const data = await response.json();
+            const accounts = data.accounts as Account[];
+
+            const filteredAccounts = accounts.filter((account) => {
+                if (excludeFollowing && followingIds.has(account.id)) {
+                    return false;
+                }
+
+                if (blockedAccountIds.has(account.id)) {
+                    return false;
+                }
+
+                if (excludeCurrentUser && currentUser && account.handle === currentUser.handle) {
+                    return false;
+                }
+
+                const parts = account.handle.split('@').filter(part => part.length > 0);
+                const accountDomain = parts.length > 1 ? parts[parts.length - 1] : null;
+                if (accountDomain && blockedDomains.has(accountDomain)) {
+                    return false;
+                }
+
+                return true;
+            });
+
+            const accountsWithDefaults = filteredAccounts.map(account => ({
+                ...account,
+                followedByMe: followingIds.has(account.id),
+                blockedByMe: false,
+                domainBlockedByMe: false
+            }));
+
+            return accountsWithDefaults;
+        } catch (error) {
+            return [];
+        }
+    }, [followingIds, blockedAccountIds, blockedDomains, excludeFollowing, excludeCurrentUser, currentUser]);
+
+    const isLoading = isLoadingFollowing || isLoadingBlockedAccounts || isLoadingBlockedDomains || isLoadingCurrentUser;
+    
+    // Track if we have finished loading all following data
+    const isFollowingDataComplete = !isLoadingFollowing && !hasNextPage;
+
+    return {
+        fetchAndFilterAccounts,
+        isLoading,
+        isFollowingDataComplete
+    };
+}
+
+export function useExploreProfilesForUser(handle: string) {
+    const queryClient = useQueryClient();
+    const queryKey = QUERY_KEYS.exploreProfiles(handle);
+    const {fetchAndFilterAccounts, isLoading, isFollowingDataComplete} = useFilteredAccountsFromJSON({
+        excludeFollowing: false
+    });
+
+    const fetchExploreProfilesFromJSON = useCallback(async () => {
+        const accounts = await fetchAndFilterAccounts();
+
+        const results = {
+            uncategorized: {
+                categoryName: 'Recommended',
+                sites: accounts
+            }
+        };
+
+        return {
+            results,
+            nextPage: undefined
+        };
+    }, [fetchAndFilterAccounts]);
+
+    const exploreProfilesQuery = useInfiniteQuery({
+        queryKey,
+        queryFn: () => fetchExploreProfilesFromJSON(),
+        getNextPageParam: () => undefined,
+        staleTime: 60 * 60 * 1000,
+        enabled: !isLoading && isFollowingDataComplete
+    });
+
+    const updateExploreProfile = (id: string, updated: Partial<Account>) => {
+        queryClient.setQueryData(queryKey, (current: {pages: Array<{results: Record<string, { categoryName: string; sites: Account[] }>}>} | undefined) => {
+            if (!current) {
+                return current;
+            }
+
+            const updatedPages = current.pages.map((page) => {
+                const updatedResults = Object.entries(page.results).reduce((acc, [categoryKey, category]) => {
+                    const updatedSites = category.sites.map((profile) => {
+                        if (profile.id === id) {
+                            return {...profile, ...updated};
+                        }
+                        return profile;
+                    });
+
+                    acc[categoryKey] = {
+                        ...category,
+                        sites: updatedSites
+                    };
+
+                    return acc;
+                }, {} as Record<string, { categoryName: string; sites: Account[] }>);
+
+                return {
+                    ...page,
+                    results: updatedResults
+                };
+            });
+
+            return {
+                ...current,
+                pages: updatedPages
+            };
+        });
+    };
+
+    return {
+        exploreProfilesQuery,
+        updateExploreProfile
+    };
+}
+
+export function useSuggestedProfilesForUser(handle: string, limit = 3) {
+    const queryClient = useQueryClient();
+    const queryKey = QUERY_KEYS.suggestedProfiles(handle, limit);
+    const {fetchAndFilterAccounts, isLoading, isFollowingDataComplete} = useFilteredAccountsFromJSON({
+        excludeFollowing: true,
+        excludeCurrentUser: true
+    });
+
+    const suggestedProfilesQuery = useQuery({
+        queryKey,
+        async queryFn() {
+            const accounts = await fetchAndFilterAccounts();
+
+            const randomAccounts = accounts
+                .sort(() => Math.random() - 0.5)
+                .slice(0, limit);
+
+            return randomAccounts.length > 0 ? randomAccounts : null;
+        },
+        retry: false,
+        staleTime: 60 * 60 * 1000,
+        enabled: !isLoading && isFollowingDataComplete
+    });
+
+    const updateSuggestedProfile = (id: string, updated: Partial<Account>) => {
+        queryClient.setQueryData(queryKey, (current: Account[] | undefined) => {
+            if (!current) {
+                return current;
+            }
+
+            return current.map((item: Account) => {
+                if (item.id === id) {
+                    return {...item, ...updated};
+                }
+
+                return item;
+            });
+        });
+    };
+
+    return {suggestedProfilesQuery, updateSuggestedProfile};
 }
