@@ -7,6 +7,8 @@ Contains:
 ## Local Dev Setup
 Last worked on a Mac (Apple Silicon) with Node v20.19.0 and Yarn 1.22.22.
 
+**Important: Docker should be open before running the below commands.**
+
 ```bash
 git clone --recurse-submodules git@github.com:scottleechua/Ghost.git && cd Ghost
 yarn setup
