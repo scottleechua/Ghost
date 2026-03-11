@@ -44,10 +44,7 @@ Two categories of apps:
 ```bash
 yarn                           # Install dependencies
 yarn setup                     # First-time setup (installs deps + submodules)
-yarn dev                       # Run Ghost + Admin in parallel
-yarn dev:admin                 # Run only Ember admin + React apps (watch mode)
-yarn dev:ghost                 # Run only Ghost backend
-yarn dev:debug                 # Run with DEBUG=@tryghost*,ghost:* enabled
+yarn dev                       # Start development (Docker backend + host frontend dev servers)
 ```
 
 ### Building
@@ -87,19 +84,49 @@ cd ghost/admin && yarn lint    # Lint Ember admin
 ### Database
 ```bash
 yarn knex-migrator migrate     # Run database migrations
-yarn reset:data                # Reset database with test data (1000 members, 100 posts)
-yarn reset:data:empty          # Reset database with no data
+yarn reset:data                # Reset database with test data (1000 members, 100 posts) (requires yarn dev running)
+yarn reset:data:empty          # Reset database with no data (requires yarn dev running)
 ```
 
 ### Docker
 ```bash
-yarn docker:build              # Build Docker images and delete ephemeral volumes
-yarn docker:dev                # Start Ghost in Docker with hot reload
-yarn docker:shell              # Open shell in Ghost container
-yarn docker:mysql              # Open MySQL CLI
-yarn docker:test:unit          # Run unit tests in Docker
-yarn docker:reset              # Reset all Docker volumes (including database) and restart
+yarn docker:build              # Build Docker images
+yarn docker:clean              # Stop containers, remove volumes and local images
+yarn docker:down               # Stop containers
 ```
+
+### How yarn dev works
+
+The `yarn dev` command uses a **hybrid Docker + host development** setup:
+
+**What runs in Docker:**
+- Ghost Core backend (with hot-reload via mounted source)
+- MySQL, Redis, Mailpit
+- Caddy gateway/reverse proxy
+
+**What runs on host:**
+- Frontend dev servers (Admin, Portal, Comments UI, etc.) in watch mode with HMR
+- Foundation libraries (shade, admin-x-framework, etc.)
+
+**Setup:**
+```bash
+# Start everything (Docker + frontend dev servers)
+yarn dev
+
+# With optional services (uses Docker Compose file composition)
+yarn dev:analytics             # Include Tinybird analytics
+yarn dev:storage               # Include MinIO S3-compatible object storage
+yarn dev:all                   # Include all optional services
+```
+
+**Accessing Services:**
+- Ghost: `http://localhost:2368` (database: `ghost_dev`)
+- Mailpit UI: `http://localhost:8025` (email testing)
+- MySQL: `localhost:3306`
+- Redis: `localhost:6379`
+- Tinybird: `http://localhost:7181` (when analytics enabled)
+- MinIO Console: `http://localhost:9001` (when storage enabled)
+- MinIO S3 API: `http://localhost:9000` (when storage enabled)
 
 ## Architecture Patterns
 
@@ -185,7 +212,7 @@ Users requested ability to switch themes for better accessibility
 - **Legacy:** `admin-x-design-system` (being phased out, avoid for new work)
 
 ### Analytics (Tinybird)
-- **Local development:** `yarn docker:dev:analytics` (starts Tinybird + MySQL)
+- **Local development:** `yarn dev:analytics` (starts Tinybird + MySQL)
 - **Config:** Add Tinybird config to `ghost/core/config.development.json`
 - **Scripts:** `ghost/core/core/server/data/tinybird/scripts/`
 - **Datafiles:** `ghost/core/core/server/data/tinybird/`

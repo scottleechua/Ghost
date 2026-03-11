@@ -640,7 +640,11 @@ input[type="image"] {
 .hidden {
     display: none;
 }
-.gh-app .hidden {
+.gh-app .hidden,
+.ember-basic-dropdown-wormhole .hidden,
+.ember-modal-wormhole .hidden,
+.liquid-destination .hidden,
+.gh-btn .hidden {
     visibility: hidden !important;
     display: none !important;
 }

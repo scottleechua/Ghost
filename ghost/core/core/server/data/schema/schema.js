@@ -435,6 +435,7 @@ module.exports = {
         email_disabled: {type: 'boolean', nullable: false, defaultTo: false},
         last_seen_at: {type: 'dateTime', nullable: true},
         last_commented_at: {type: 'dateTime', nullable: true},
+        commenting: {type: 'text', maxlength: 65535, nullable: true},
         created_at: {type: 'dateTime', nullable: false},
         updated_at: {type: 'dateTime', nullable: true},
         '@@INDEXES@@': [
@@ -482,7 +483,7 @@ module.exports = {
         active: {type: 'boolean', nullable: false, defaultTo: true},
         name: {type: 'string', maxlength: 191, nullable: false, unique: true},
         code: {type: 'string', maxlength: 191, nullable: false, unique: true},
-        product_id: {type: 'string', maxlength: 24, nullable: false, references: 'products.id'},
+        product_id: {type: 'string', maxlength: 24, nullable: true, references: 'products.id'},
         stripe_coupon_id: {type: 'string', maxlength: 255, nullable: true, unique: true},
         interval: {type: 'string', maxlength: 50, nullable: false, validations: {isIn: [['month', 'year']]}},
         currency: {type: 'string', maxlength: 50, nullable: true},
@@ -492,6 +493,7 @@ module.exports = {
         duration_in_months: {type: 'integer', nullable: true},
         portal_title: {type: 'string', maxlength: 191, nullable: true},
         portal_description: {type: 'string', maxlength: 2000, nullable: true},
+        redemption_type: {type: 'string', maxlength: 50, nullable: false, defaultTo: 'signup', validations: {isIn: [['signup', 'retention']]}},
         created_at: {type: 'dateTime', nullable: false},
         updated_at: {type: 'dateTime', nullable: true}
     },
@@ -697,6 +699,8 @@ module.exports = {
         updated_at: {type: 'dateTime', nullable: true},
         mrr: {type: 'integer', unsigned: true, nullable: false, defaultTo: 0},
         offer_id: {type: 'string', maxlength: 24, nullable: true, unique: false, references: 'offers.id'},
+        discount_start: {type: 'dateTime', nullable: true},
+        discount_end: {type: 'dateTime', nullable: true},
         trial_start_at: {type: 'dateTime', nullable: true},
         trial_end_at: {type: 'dateTime', nullable: true},
         /* Below fields are now redundant as we link stripe_price_id to stripe_prices table */
@@ -1121,7 +1125,13 @@ module.exports = {
     outbox: {
         id: {type: 'string', maxlength: 24, nullable: false, primary: true},
         event_type: {type: 'string', maxlength: 50, nullable: false},
-        status: {type: 'string', maxlength: 50, nullable: false, defaultTo: 'pending'},
+        status: {
+            type: 'string',
+            maxlength: 50,
+            nullable: false,
+            defaultTo: 'pending',
+            validations: {isIn: [['pending', 'processing', 'failed', 'completed']]}
+        },
         payload: {type: 'text', maxlength: 65535, nullable: false},
         created_at: {type: 'dateTime', nullable: false},
         updated_at: {type: 'dateTime', nullable: true},
@@ -1131,5 +1141,32 @@ module.exports = {
         '@@INDEXES@@': [
             ['event_type', 'status', 'created_at']
         ]
+    },
+    automated_emails: {
+        id: {type: 'string', maxlength: 24, nullable: false, primary: true},
+        status: {type: 'string', maxlength: 50, nullable: false, defaultTo: 'inactive', validations: {isIn: [['active', 'inactive']]}},
+        name: {type: 'string', maxlength: 191, nullable: false, unique: true},
+        slug: {type: 'string', maxlength: 191, nullable: false, unique: true},
+        subject: {type: 'string', maxlength: 300, nullable: false},
+        lexical: {type: 'text', maxlength: 1000000000, fieldtype: 'long', nullable: true},
+        sender_name: {type: 'string', maxlength: 191, nullable: true},
+        sender_email: {type: 'string', maxlength: 191, nullable: true, validations: {isEmail: true}},
+        sender_reply_to: {type: 'string', maxlength: 191, nullable: true, validations: {isEmail: true}},
+        created_at: {type: 'dateTime', nullable: false},
+        updated_at: {type: 'dateTime', nullable: true},
+        '@@INDEXES@@': [
+            ['slug'],
+            ['status']
+        ]
+    },
+    automated_email_recipients: {
+        id: {type: 'string', maxlength: 24, nullable: false, primary: true},
+        automated_email_id: {type: 'string', maxlength: 24, nullable: false, references: 'automated_emails.id'},
+        member_id: {type: 'string', maxlength: 24, nullable: false, index: true},
+        member_uuid: {type: 'string', maxlength: 36, nullable: false},
+        member_email: {type: 'string', maxlength: 191, nullable: false},
+        member_name: {type: 'string', maxlength: 191, nullable: true},
+        created_at: {type: 'dateTime', nullable: false},
+        updated_at: {type: 'dateTime', nullable: true}
     }
 };

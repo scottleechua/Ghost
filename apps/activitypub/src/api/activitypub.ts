@@ -26,13 +26,32 @@ export interface Account {
     domainBlockedByMe: boolean;
     attachment: { name: string; value: string }[];
     blueskyEnabled?: boolean;
-    blueskyHandle?: string;
+    blueskyHandleConfirmed?: boolean;
+    blueskyHandle?: string | null;
 }
 
 export type AccountSearchResult = Pick<
     Account,
-    'id' | 'name' | 'handle' | 'avatarUrl' | 'followedByMe' | 'followerCount' | 'blockedByMe' | 'domainBlockedByMe'
+    'id' | 'name' | 'handle' | 'avatarUrl' | 'followedByMe' | 'blockedByMe' | 'domainBlockedByMe'
 >;
+
+export type ExploreAccount = Pick<
+    Account,
+    'id' | 'name' | 'handle' | 'avatarUrl' | 'bio' | 'url' | 'followedByMe'
+>;
+
+export interface TopicData {
+    slug: string;
+    name: string;
+}
+
+export interface GetTopicsResponse {
+    topics: TopicData[];
+}
+
+export interface GetRecommendationsResponse {
+    accounts: ExploreAccount[];
+}
 
 export interface SearchResults {
     accounts: AccountSearchResult[];
@@ -99,6 +118,7 @@ export interface Notification {
         url: string;
         handle: string;
         avatarUrl: string | null;
+        followedByMe?: boolean;
     },
     post: null | {
         id: string;
@@ -194,6 +214,16 @@ export interface PaginatedPostsResponse {
     next: string | null;
 }
 
+export interface PaginatedAccountsResponse {
+    accounts: Account[];
+    next: string | null;
+}
+
+export interface PaginatedExploreAccountsResponse {
+    accounts: ExploreAccount[];
+    next: string | null;
+}
+
 export type ApiError = {
     message: string;
     statusCode: number;
@@ -224,7 +254,7 @@ export class ActivityPubAPI {
             const response = await this.fetch(this.authApiUrl);
             const json = await response.json();
             return json?.identities?.[0]?.token || null;
-        } catch (err) {
+        } catch {
             // TODO: Ping sentry?
             return null;
         }
@@ -245,7 +275,7 @@ export class ActivityPubAPI {
         }
         const response = await this.fetch(url, options);
 
-        if (response.status === 204) {
+        if (response.status === 204 || response.status === 202) {
             return null;
         }
 
@@ -455,6 +485,30 @@ export class ActivityPubAPI {
         return this.getPaginatedPosts(endpoint, next);
     }
 
+    async getExploreAccounts(topic: string, next?: string): Promise<PaginatedExploreAccountsResponse> {
+        const endpoint = `.ghost/activitypub/v1/explore/${topic}`;
+        return this.getPaginatedExploreAccounts(endpoint, next);
+    }
+
+    async getTopics(): Promise<GetTopicsResponse> {
+        const url = new URL('.ghost/activitypub/v1/topics', this.apiUrl);
+        const json = await this.fetchJSON(url);
+        return {
+            topics: (json && 'topics' in json && Array.isArray(json.topics)) ? json.topics : []
+        };
+    }
+
+    async getRecommendations(limit?: number): Promise<GetRecommendationsResponse> {
+        const url = new URL('.ghost/activitypub/v1/recommendations', this.apiUrl);
+        if (limit) {
+            url.searchParams.set('limit', limit.toString());
+        }
+        const json = await this.fetchJSON(url);
+        return {
+            accounts: (json && 'accounts' in json && Array.isArray(json.accounts)) ? json.accounts : []
+        };
+    }
+
     async getPostsByAccount(handle: string, next?: string): Promise<PaginatedPostsResponse> {
         return this.getPaginatedPosts(`.ghost/activitypub/v1/posts/${handle}`, next);
     }
@@ -598,6 +652,31 @@ export class ActivityPubAPI {
         };
     }
 
+    private async getPaginatedExploreAccounts(endpoint: string, next?: string): Promise<PaginatedExploreAccountsResponse> {
+        const url = new URL(endpoint, this.apiUrl);
+
+        if (next) {
+            url.searchParams.set('next', next);
+        }
+
+        const json = await this.fetchJSON(url);
+
+        if (json === null || !('accounts' in json)) {
+            return {
+                accounts: [],
+                next: null
+            };
+        }
+
+        const accounts = Array.isArray(json.accounts) ? json.accounts : [];
+        const nextPage = 'next' in json && typeof json.next === 'string' ? json.next : null;
+
+        return {
+            accounts,
+            next: nextPage
+        };
+    }
+
     async getPost(id: string): Promise<Post> {
         const url = new URL(`.ghost/activitypub/v1/post/${encodeURIComponent(id)}`, this.apiUrl);
         const json = await this.fetchJSON(url);
@@ -662,8 +741,20 @@ export class ActivityPubAPI {
         return json.fileUrl;
     }
 
-    async enableBluesky(): Promise<string> {
-        const url = new URL('.ghost/activitypub/v1/actions/bluesky/enable', this.apiUrl);
+    async enableBluesky() {
+        const url = new URL('.ghost/activitypub/v2/actions/bluesky/enable', this.apiUrl);
+
+        await this.fetchJSON(url, 'POST');
+    }
+
+    async disableBluesky() {
+        const url = new URL('.ghost/activitypub/v2/actions/bluesky/disable', this.apiUrl);
+
+        await this.fetchJSON(url, 'POST');
+    }
+
+    async confirmBlueskyHandle(): Promise<string> {
+        const url = new URL('.ghost/activitypub/v2/actions/bluesky/confirm-handle', this.apiUrl);
 
         const json = await this.fetchJSON(url, 'POST');
 
@@ -672,11 +763,5 @@ export class ActivityPubAPI {
         }
 
         return String(json.handle);
-    }
-
-    async disableBluesky() {
-        const url = new URL('.ghost/activitypub/v1/actions/bluesky/disable', this.apiUrl);
-
-        await this.fetchJSON(url, 'POST');
     }
 }

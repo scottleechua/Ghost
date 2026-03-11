@@ -1,4 +1,2 @@
-export * from './GhostManager';
-export * from './MySQLManager';
-export * from './PortalManager';
-export * from './TinybirdManager';
+export * from './ghost-manager';
+export * from './mysql-manager';

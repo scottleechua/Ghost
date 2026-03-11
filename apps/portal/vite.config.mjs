@@ -36,8 +36,8 @@ export default defineConfig((config) => {
             svgrPlugin()
         ],
         esbuild: {
-            loader: 'jsx',
-            include: [/src\/.*\.jsx?$/, /__mocks__\/.*\.jsx?$/],
+            loader: 'tsx',
+            include: [/src\/.*\.[jt]sx?$/, /__mocks__\/.*\.[jt]sx?$/, /test\/.*\.[jt]sx?$/],
             exclude: []
         },
         optimizeDeps: {
@@ -82,7 +82,7 @@ export default defineConfig((config) => {
         test: {
             globals: true,
             environment: 'jsdom',
-            setupFiles: './src/setupTests.js',
+            setupFiles: './test/setup-tests.js',
             testTimeout: 10000,
             coverage: {
                 reporter: ['cobertura', 'text-summary', 'html']
