@@ -114,6 +114,7 @@ fi
 
 # Hide Powered by Ghost badge if flag is set
 if [ "$HIDE_POWERED_BY_GHOST" = true ]; then
+    echo "Removing Powered by Ghost box"
     perl -i -pe "s/\+ \(hasMode\(\['preview'\]\) \? 'hidden ' : ''\) \+ pageClass/+ 'hidden ' + pageClass/g" "$GHOST_ROOT/apps/portal/src/components/popup-modal.js"
 fi
 
