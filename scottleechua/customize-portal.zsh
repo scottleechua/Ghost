@@ -88,11 +88,8 @@ fi
 
 # Hide already a member message if flag is set
 if [ "$HIDE_ALREADY_MEMBER" = true ]; then
-    # Capture the original display rule
-    ORIGINAL_DISPLAY=$(grep -A 1 '\.gh-portal-signup-message {' "$GHOST_ROOT/apps/portal/src/components/pages/signup-page.js" | grep 'display:' | sed 's/.*display: \([^;]*\);.*/\1/')
-
-    # Modify the CSS rule in signup-page.js
-    sed -i '' "/\.gh-portal-signup-message {/,/}/s/display: $ORIGINAL_DISPLAY;/display: none !important;/g" "$GHOST_ROOT/apps/portal/src/components/pages/signup-page.js"
+    # Insert return null as first statement in renderLoginMessage() so the element is never rendered
+    perl -i -pe 's/renderLoginMessage\(\) \{/renderLoginMessage() {\n        return null;/' "$GHOST_ROOT/apps/portal/src/components/pages/signup-page.js"
 fi
 
 # Hide site title if flag is set
@@ -102,8 +99,8 @@ if [ "$HIDE_SITE_TITLE" = true ]; then
     # Delete only the h1 element after renderSiteIcon() in signup-page.js
     sed -i '' '/{this.renderSiteIcon()}/,/<\/h1>/ {/<\/h1>/d;}' "$GHOST_ROOT/apps/portal/src/components/pages/signup-page.js"
 
-    # Find renderSiteTitle() and delete the h1 element if it exists within 10 lines in signin-page.js
-    sed -i '' '/renderSiteTitle() {/,+10 {/^\s*<h1 className='\''gh-portal-main-title'\''>{siteTitle}<\/h1>/d;}' "$GHOST_ROOT/apps/portal/src/components/pages/signin-page.js"
+    # Find renderSiteTitle() and replace the siteTitle return block with return null in signin-page.js
+    perl -i -0pe 's/(\n[ \t]+)return \(\n[ \t]+<h1 className='"'"'gh-portal-main-title'"'"'>\{siteTitle\}<\/h1>\n[ \t]+\);/$1return null;/g' "$GHOST_ROOT/apps/portal/src/components/pages/signin-page.js"
 
     # Delete padding and margin from signup header
     sed -i '' '/padding: 0 32px;/,/margin-bottom: 32px;/d' "$GHOST_ROOT/apps/portal/src/components/pages/signup-page.js"
@@ -148,8 +145,8 @@ if [ "$ENABLE_DARK_MODE" = true ]; then
 fi
 
 # Temporarily modify portal's vite.config.js to only include English translations
-echo "Modifying portal's vite.config.js to use English-only translations..."
-PORTAL_VITE_CONFIG="$GHOST_ROOT/apps/portal/vite.config.js"
+echo "Modifying portal's vite.config.mjs to use English-only translations..."
+PORTAL_VITE_CONFIG="$GHOST_ROOT/apps/portal/vite.config.mjs"
 # Create a backup of the original config
 cp "$PORTAL_VITE_CONFIG" "${PORTAL_VITE_CONFIG}.backup"
 # Modify the config to only include English translations

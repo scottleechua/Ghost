@@ -5,7 +5,7 @@ Contains:
 - `customize-sodosearch.zsh`
 
 ## Local Dev Setup
-Last worked on a Mac (Apple Silicon) with Node v20.19.0 and Yarn 1.22.22.
+Last worked on a Mac (Apple Silicon) with Node v22.18.0, Perl 5.34.1, and Yarn 1.22.22.
 
 **Important: Docker should be open before running the below commands.**
 
