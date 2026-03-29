@@ -17,30 +17,35 @@ yarn setup
 ## Customize Portal
 
 ```bash
-./customize-portal.zsh [--placeholder-name <full name>] [--placeholder-email <email>] [--hide-already-member] <path/to/theme>
+./customize-portal.zsh [--placeholder-name <full name>] [--placeholder-email <email>] [--hide-already-member] [--hide-site-title] [--hide-powered-by-ghost] [--replace-icon-with-logo] [--enable-dark-mode] [--custom-accents <primary_light> <secondary_light> <primary_dark> <secondary_dark>] <path/to/theme>
 ```
 
 This script will:
-1. Replace placeholder text in Portal components with your information (if `--placeholder-name` and/or `--placeholder-email` are provided)
+1. Replace placeholder name/email in Portal input fields (if `--placeholder-name` and/or `--placeholder-email` are provided)
 2. Hide the "Already a member?" message (if `--hide-already-member` is provided)
-3. Build a minified Portal with `en` locale only
-4. Copy the built `portal.min.js` to your theme directory
-5. Create or update a `PORTAL-VERSION` file with the current Portal version
-6. Restore the original placeholder text and styles
+3. Hide the site title on the signin and signup pages (if `--hide-site-title` is provided)
+4. Hide the "Powered by Ghost" badge (if `--hide-powered-by-ghost` is provided)
+5. Replace the site icon with the site logo (if `--replace-icon-with-logo` is provided)
+6. Enable dark mode synced to the parent page's `dark` class (if `--enable-dark-mode` is provided)
+7. Apply custom accent colors for light and dark mode (if `--custom-accents` is provided; requires `--enable-dark-mode`)
+8. Build a minified Portal with `en` locale only
+9. Copy the built `portal.min.js` to your theme directory
+10. Create or update a `PORTAL-VERSION` file with the current Portal version
+11. Restore all modified source files
 
 Examples:
 ```bash
 # Basic usage (only theme path required)
 ./customize-portal.zsh "path/to/theme"
 
-# With custom name and email
+# With custom name and email placeholders
 ./customize-portal.zsh --placeholder-name "John Doe" --placeholder-email "john@example.com" "path/to/theme"
 
 # Hide the "Already a member?" message
 ./customize-portal.zsh --hide-already-member "path/to/theme"
 
-# With all customization options
-./customize-portal.zsh --placeholder-name "John Doe" --placeholder-email "john@example.com" --hide-already-member "path/to/theme"
+# With all options
+./customize-portal.zsh --placeholder-name "John Doe" --placeholder-email "john@example.com" --hide-already-member --hide-site-title --hide-powered-by-ghost --replace-icon-with-logo --enable-dark-mode --custom-accents "#ff0000" "#ffffff" "#cc0000" "#ffffff" "path/to/theme"
 ```
 
 The script can be run from any directory by using its full path:

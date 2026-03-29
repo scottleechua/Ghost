@@ -5,6 +5,7 @@ PLACEHOLDER_NAME=""
 PLACEHOLDER_EMAIL=""
 HIDE_ALREADY_MEMBER=false
 HIDE_SITE_TITLE=false
+HIDE_POWERED_BY_GHOST=false
 REPLACE_ICON_WITH_LOGO=false
 ENABLE_DARK_MODE=false
 CUSTOM_ACCENTS=()
@@ -15,6 +16,7 @@ while [[ "$#" -gt 0 ]]; do
         --placeholder-email) PLACEHOLDER_EMAIL="$2"; shift ;;
         --hide-already-member) HIDE_ALREADY_MEMBER=true ;;
         --hide-site-title) HIDE_SITE_TITLE=true ;;
+        --hide-powered-by-ghost) HIDE_POWERED_BY_GHOST=true ;;
         --replace-icon-with-logo) REPLACE_ICON_WITH_LOGO=true ;;
         --enable-dark-mode) ENABLE_DARK_MODE=true ;;
         --custom-accents)
@@ -28,11 +30,12 @@ done
 
 # Check if all required arguments are provided
 if [ "$#" -ne 1 ]; then
-    echo "Usage: $0 [--placeholder-name <name>] [--placeholder-email <email>] [--hide-already-member] [--hide-site-title] [--replace-icon-with-logo] [--enable-dark-mode] [--custom-accents <primary_light> <secondary_light> <primary_dark> <secondary_dark>] <path_to_theme>"
+    echo "Usage: $0 [--placeholder-name <name>] [--placeholder-email <email>] [--hide-already-member] [--hide-site-title] [--hide-powered-by-ghost] [--replace-icon-with-logo] [--enable-dark-mode] [--custom-accents <primary_light> <secondary_light> <primary_dark> <secondary_dark>] <path_to_theme>"
     echo "  --placeholder-name    Set placeholder name (e.g., 'John Doe')"
     echo "  --placeholder-email   Set placeholder email (e.g., 'john@example.com')"
     echo "  --hide-already-member  Hide the 'Already a member?' message"
     echo "  --hide-site-title     Hide the site title in the portal"
+    echo "  --hide-powered-by-ghost  Hide the 'Powered by Ghost' badge"
     echo "  --replace-icon-with-logo  Replace the site icon in the portal with the site logo"
     echo "  --enable-dark-mode     Enable dark mode"
     echo "  --custom-accents       Set custom accent colors"
@@ -107,6 +110,11 @@ if [ "$HIDE_SITE_TITLE" = true ]; then
 
     # Modify margin in frame.styles.js
     sed -i '' '/\.gh-portal-newsletter-selection {/,+2 s/margin:.*;/margin: 12px auto;/' "$GHOST_ROOT/apps/portal/src/components/frame.styles.js"
+fi
+
+# Hide Powered by Ghost badge if flag is set
+if [ "$HIDE_POWERED_BY_GHOST" = true ]; then
+    perl -i -pe "s/\+ \(hasMode\(\['preview'\]\) \? 'hidden ' : ''\) \+ pageClass/+ 'hidden ' + pageClass/g" "$GHOST_ROOT/apps/portal/src/components/popup-modal.js"
 fi
 
 # Replace icon with logo if flag is set
