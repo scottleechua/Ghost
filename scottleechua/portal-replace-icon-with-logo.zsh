@@ -17,18 +17,18 @@ fi
 
 echo "Replacing icon with logo..."
 
-# Replace SiteIcon with SiteLogo in SignupPage.js
-sed -i '' 's/SiteIcon/SiteLogo/g' "$GHOST_ROOT/apps/portal/src/components/pages/SignupPage.js"
-sed -i '' 's/siteIcon/siteLogo/g' "$GHOST_ROOT/apps/portal/src/components/pages/SignupPage.js"
-sed -i '' 's/site.icon/site.logo/g' "$GHOST_ROOT/apps/portal/src/components/pages/SignupPage.js"
+# Replace SiteIcon with SiteLogo in signup-page.js
+sed -i '' 's/SiteIcon/SiteLogo/g' "$GHOST_ROOT/apps/portal/src/components/pages/signup-page.js"
+sed -i '' 's/siteIcon/siteLogo/g' "$GHOST_ROOT/apps/portal/src/components/pages/signup-page.js"
+sed -i '' 's/site.icon/site.logo/g' "$GHOST_ROOT/apps/portal/src/components/pages/signup-page.js"
 
-# Replace SiteIcon with SiteLogo in SigninPage.js
-sed -i '' 's/SiteIcon/SiteLogo/g' "$GHOST_ROOT/apps/portal/src/components/pages/SigninPage.js"
-sed -i '' 's/siteIcon/siteLogo/g' "$GHOST_ROOT/apps/portal/src/components/pages/SigninPage.js"
-sed -i '' 's/site.icon/site.logo/g' "$GHOST_ROOT/apps/portal/src/components/pages/SigninPage.js"
+# Replace SiteIcon with SiteLogo in signin-page.js
+sed -i '' 's/SiteIcon/SiteLogo/g' "$GHOST_ROOT/apps/portal/src/components/pages/signin-page.js"
+sed -i '' 's/siteIcon/siteLogo/g' "$GHOST_ROOT/apps/portal/src/components/pages/signin-page.js"
+sed -i '' 's/site.icon/site.logo/g' "$GHOST_ROOT/apps/portal/src/components/pages/signin-page.js"
 
 # Delete width = 60px
-sed -i '' '/width: 60px;/d' "$GHOST_ROOT/apps/portal/src/components/pages/SignupPage.js"
+sed -i '' '/width: 60px;/d' "$GHOST_ROOT/apps/portal/src/components/pages/signup-page.js"
 
 # Create a temporary file with the new media query block
 TEMP_FILE=$(mktemp)
@@ -72,7 +72,7 @@ awk '
         next
     }
     !in_block { print }
-' "$GHOST_ROOT/apps/portal/src/components/pages/SignupPage.js" > "$GHOST_ROOT/apps/portal/src/components/pages/SignupPage.js.tmp" && mv "$GHOST_ROOT/apps/portal/src/components/pages/SignupPage.js.tmp" "$GHOST_ROOT/apps/portal/src/components/pages/SignupPage.js"
+' "$GHOST_ROOT/apps/portal/src/components/pages/signup-page.js" > "$GHOST_ROOT/apps/portal/src/components/pages/signup-page.js.tmp" && mv "$GHOST_ROOT/apps/portal/src/components/pages/signup-page.js.tmp" "$GHOST_ROOT/apps/portal/src/components/pages/signup-page.js"
 
 # Clean up temporary file
 rm "$TEMP_FILE"

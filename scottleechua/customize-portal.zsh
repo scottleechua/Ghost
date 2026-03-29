@@ -73,43 +73,43 @@ echo "Portal version: $PORTAL_VERSION"
 
 # Replace name placeholder in all files
 if [ ! -z "$PLACEHOLDER_NAME" ]; then
-    sed -i '' "s/Jamie Larson/$PLACEHOLDER_NAME/g" "$GHOST_ROOT/apps/portal/src/components/pages/AccountProfilePage.js"
-    sed -i '' "s/Jamie Larson/$PLACEHOLDER_NAME/g" "$GHOST_ROOT/apps/portal/src/components/pages/OfferPage.js"
-    sed -i '' "s/Jamie Larson/$PLACEHOLDER_NAME/g" "$GHOST_ROOT/apps/portal/src/components/pages/SignupPage.js"
+    sed -i '' "s/Jamie Larson/$PLACEHOLDER_NAME/g" "$GHOST_ROOT/apps/portal/src/components/pages/account-profile-page.js"
+    sed -i '' "s/Jamie Larson/$PLACEHOLDER_NAME/g" "$GHOST_ROOT/apps/portal/src/components/pages/offer-page.js"
+    sed -i '' "s/Jamie Larson/$PLACEHOLDER_NAME/g" "$GHOST_ROOT/apps/portal/src/components/pages/signup-page.js"
 fi
 
 # Replace email placeholder in all files
 if [ ! -z "$PLACEHOLDER_EMAIL" ]; then
-    sed -i '' "s/jamie@example.com/$PLACEHOLDER_EMAIL/g" "$GHOST_ROOT/apps/portal/src/components/pages/AccountProfilePage.js"
-    sed -i '' "s/jamie@example.com/$PLACEHOLDER_EMAIL/g" "$GHOST_ROOT/apps/portal/src/components/pages/OfferPage.js"
-    sed -i '' "s/jamie@example.com/$PLACEHOLDER_EMAIL/g" "$GHOST_ROOT/apps/portal/src/components/pages/SignupPage.js"
-    sed -i '' "s/jamie@example.com/$PLACEHOLDER_EMAIL/g" "$GHOST_ROOT/apps/portal/src/components/pages/SigninPage.js"
+    sed -i '' "s/jamie@example.com/$PLACEHOLDER_EMAIL/g" "$GHOST_ROOT/apps/portal/src/components/pages/account-profile-page.js"
+    sed -i '' "s/jamie@example.com/$PLACEHOLDER_EMAIL/g" "$GHOST_ROOT/apps/portal/src/components/pages/offer-page.js"
+    sed -i '' "s/jamie@example.com/$PLACEHOLDER_EMAIL/g" "$GHOST_ROOT/apps/portal/src/components/pages/signup-page.js"
+    sed -i '' "s/jamie@example.com/$PLACEHOLDER_EMAIL/g" "$GHOST_ROOT/apps/portal/src/components/pages/signin-page.js"
 fi
 
 # Hide already a member message if flag is set
 if [ "$HIDE_ALREADY_MEMBER" = true ]; then
     # Capture the original display rule
-    ORIGINAL_DISPLAY=$(grep -A 1 '\.gh-portal-signup-message {' "$GHOST_ROOT/apps/portal/src/components/pages/SignupPage.js" | grep 'display:' | sed 's/.*display: \([^;]*\);.*/\1/')
-    
-    # Modify the CSS rule in SignupPage.js
-    sed -i '' "/\.gh-portal-signup-message {/,/}/s/display: $ORIGINAL_DISPLAY;/display: none !important;/g" "$GHOST_ROOT/apps/portal/src/components/pages/SignupPage.js"
+    ORIGINAL_DISPLAY=$(grep -A 1 '\.gh-portal-signup-message {' "$GHOST_ROOT/apps/portal/src/components/pages/signup-page.js" | grep 'display:' | sed 's/.*display: \([^;]*\);.*/\1/')
+
+    # Modify the CSS rule in signup-page.js
+    sed -i '' "/\.gh-portal-signup-message {/,/}/s/display: $ORIGINAL_DISPLAY;/display: none !important;/g" "$GHOST_ROOT/apps/portal/src/components/pages/signup-page.js"
 fi
 
 # Hide site title if flag is set
 if [ "$HIDE_SITE_TITLE" = true ]; then
     echo "Removing site title on Signin and Signup pages..."
     
-    # Delete only the h1 element after renderSiteIcon() in SignupPage.js
-    sed -i '' '/{this.renderSiteIcon()}/,/<\/h1>/ {/<\/h1>/d;}' "$GHOST_ROOT/apps/portal/src/components/pages/SignupPage.js"
-    
-    # Find renderSiteTitle() and delete the h1 element if it exists within 10 lines in SigninPage.js
-    sed -i '' '/renderSiteTitle() {/,+10 {/^\s*<h1 className='\''gh-portal-main-title'\''>{siteTitle}<\/h1>/d;}' "$GHOST_ROOT/apps/portal/src/components/pages/SigninPage.js"
+    # Delete only the h1 element after renderSiteIcon() in signup-page.js
+    sed -i '' '/{this.renderSiteIcon()}/,/<\/h1>/ {/<\/h1>/d;}' "$GHOST_ROOT/apps/portal/src/components/pages/signup-page.js"
+
+    # Find renderSiteTitle() and delete the h1 element if it exists within 10 lines in signin-page.js
+    sed -i '' '/renderSiteTitle() {/,+10 {/^\s*<h1 className='\''gh-portal-main-title'\''>{siteTitle}<\/h1>/d;}' "$GHOST_ROOT/apps/portal/src/components/pages/signin-page.js"
 
     # Delete padding and margin from signup header
-    sed -i '' '/padding: 0 32px;/,/margin-bottom: 32px;/d' "$GHOST_ROOT/apps/portal/src/components/pages/SignupPage.js"
+    sed -i '' '/padding: 0 32px;/,/margin-bottom: 32px;/d' "$GHOST_ROOT/apps/portal/src/components/pages/signup-page.js"
 
-    # Modify margin in Frame.styles.js
-    sed -i '' '/\.gh-portal-newsletter-selection {/,+2 s/margin:.*;/margin: 12px auto;/' "$GHOST_ROOT/apps/portal/src/components/Frame.styles.js"
+    # Modify margin in frame.styles.js
+    sed -i '' '/\.gh-portal-newsletter-selection {/,+2 s/margin:.*;/margin: 12px auto;/' "$GHOST_ROOT/apps/portal/src/components/frame.styles.js"
 fi
 
 # Replace icon with logo if flag is set
