@@ -47,8 +47,8 @@ echo "Sodosearch version: $SODOSEARCH_VERSION"
 if [ ! -z "$FONT_FAMILY" ]; then
     echo "Editing styles..."
     
-    # Add font-family to the existing html block
-    sed -i '' '/^html {/a\
+    # Add font-family to the body block (avoids Tailwind v3.4+ :host,html specificity issue)
+    sed -i '' '/^body {/a\
     font-family: '"$FONT_FAMILY"';\
 ' "$GHOST_ROOT/apps/sodo-search/src/index.css"
 fi
