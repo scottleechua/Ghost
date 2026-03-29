@@ -55,7 +55,7 @@ fi
 
 # Temporarily modify sodo-search's vite.config.js to only include English translations
 echo "Modifying sodo-search's vite.config.js to use English-only translations..."
-SODOSEARCH_VITE_CONFIG="$GHOST_ROOT/apps/sodo-search/vite.config.js"
+SODOSEARCH_VITE_CONFIG="$GHOST_ROOT/apps/sodo-search/vite.config.mjs"
 # Create a backup of the original config
 cp "$SODOSEARCH_VITE_CONFIG" "${SODOSEARCH_VITE_CONFIG}.backup"
 # Modify the config to only include English translations
