@@ -2,7 +2,9 @@ import APAvatar from '@src/components/global/ap-avatar';
 import FollowButton from '@src/components/global/follow-button';
 import ProfilePreviewHoverCard from '@components/global/profile-preview-hover-card';
 import {Account} from '@src/api/activitypub';
-import {Button, H4, LucideIcon, Separator, Skeleton} from '@tryghost/shade';
+import {Button, Separator, Skeleton} from '@tryghost/shade/components';
+import {H4} from '@tryghost/shade/primitives';
+import {LucideIcon} from '@tryghost/shade/utils';
 import {useEffect, useRef, useState} from 'react';
 import {useNavigateWithBasePath} from '@src/hooks/use-navigate-with-base-path';
 import {useSuggestedProfilesForUser} from '@src/hooks/use-activity-pub-queries';
@@ -117,7 +119,7 @@ const SuggestedProfiles: React.FC = () => {
                         {(isLoadingSuggestedProfiles ? Array(10).fill(null) : (suggestedProfilesData || [])).map((profile, index) => (
                             <div
                                 key={profile?.id || `loading-${index}`}
-                                className='relative w-40 shrink-0 snap-start rounded-lg bg-gray-75 p-4 dark:bg-gray-925/30'
+                                className='relative w-40 shrink-0 snap-start rounded-lg bg-gray-100 p-4 dark:bg-gray-950/30'
                                 onClick={!isLoadingSuggestedProfiles && profile ? () => navigate(`/profile/${profile.handle}`) : undefined}
                             >
                                 <Button

@@ -1,15 +1,7 @@
 import React from "react"
 
-import {
-    DropdownMenu,
-    DropdownMenuContent,
-    DropdownMenuSeparator,
-    DropdownMenuTrigger,
-    Indicator,
-    LucideIcon,
-    SidebarMenuButton,
-    Switch
-} from "@tryghost/shade"
+import {DropdownMenu, DropdownMenuContent, DropdownMenuSeparator, DropdownMenuTrigger, Indicator, SidebarMenuButton, Switch} from "@tryghost/shade/components"
+import {LucideIcon} from "@tryghost/shade/utils"
 import { useCurrentUser } from "@tryghost/admin-x-framework/api/current-user";
 import { getGhostPaths } from "@tryghost/admin-x-framework/helpers";
 import { useUserPreferences, useEditUserPreferences } from "@/hooks/user-preferences";
@@ -20,6 +12,7 @@ import { UserMenuItem } from "./user-menu-item";
 import { UserMenuAvatar } from "./user-menu-avatar";
 import { UserMenuHeader } from "./user-menu-header";
 import { Link } from "@tryghost/admin-x-framework";
+import { getAdminToolbarUrl } from "@/utils/admin-toolbar-url";
 
 function UserMenuProfile() {
     const currentUser = useCurrentUser();
@@ -196,7 +189,7 @@ function UserMenu(props: UserMenuProps) {
 function ContributorUserMenu() {
     const currentUser = useCurrentUser();
     const site = useBrowseSite();
-    const siteUrl = site.data?.site.url ?? "";
+    const siteUrl = getAdminToolbarUrl(site.data?.site.url ?? "");
 
     return (
         <DropdownMenu>

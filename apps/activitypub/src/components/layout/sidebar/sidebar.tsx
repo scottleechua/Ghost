@@ -5,7 +5,8 @@ import Recommendations from './recommendations';
 import Search from '@src/components/modals/search';
 import SearchInput from '../header/search-input';
 import SidebarMenuLink from './sidebar-menu-link';
-import {Button, Dialog, DialogContent, DialogTrigger, LucideIcon} from '@tryghost/shade';
+import {Button, Dialog, DialogContent, DialogTrigger} from '@tryghost/shade/components';
+import {LucideIcon} from '@tryghost/shade/utils';
 import {useAppBasePath} from '@src/hooks/use-app-base-path';
 import {useCurrentUser} from '@tryghost/admin-x-framework/api/current-user';
 import {useFeatureFlags} from '@src/lib/feature-flags';
@@ -78,7 +79,7 @@ const Sidebar: React.FC<SidebarProps> = ({isMobileSidebarOpen}) => {
                         </SidebarMenuLink>
                         {showExternalExplore ? (
                             <Button
-                                className='inline-flex w-full items-center gap-2 rounded-sm px-3 py-2.5 text-left text-md font-medium text-gray-800 transition-colors hover:bg-gray-100 dark:text-gray-500 dark:hover:bg-gray-925/70'
+                                className='inline-flex w-full items-center gap-2 rounded-sm px-3 py-2.5 text-left text-md font-medium text-gray-800 transition-colors hover:bg-gray-100 dark:text-gray-500 dark:hover:bg-gray-950/70'
                                 variant='ghost'
                                 asChild
                             >

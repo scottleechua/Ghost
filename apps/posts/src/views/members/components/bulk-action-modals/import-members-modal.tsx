@@ -1,26 +1,34 @@
 import {CompleteStep, ErrorStep, InitStep, MappingStep, ProcessingStep} from './import-members/components';
-import {Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, cn} from '@tryghost/shade';
-import {MembersFieldMapping, detectFieldTypes} from './import-members/mapping';
+import {Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle} from '@tryghost/shade/components';
+import {type ImportResponse} from './import-members/state';
+import {MembersFieldMapping, detectFieldTypes, getFieldMappings} from './import-members/mapping';
 import {buildImportResponse} from './import-members/upload';
+import {cn} from '@tryghost/shade/utils';
 import {createInitialImportState, importReducer} from './import-members/reducer';
 import {getGhostPaths} from '@tryghost/admin-x-framework/helpers';
 import {parseCSV} from './import-members/csv';
+import {useBrowseConfig} from '@tryghost/admin-x-framework/api/config';
 import {useCallback, useEffect, useMemo, useReducer, useRef} from 'react';
 import {useLabelPicker} from '@src/hooks/use-label-picker';
 
 interface ImportMembersModalProps {
     open: boolean;
     onOpenChange: (open: boolean) => void;
-    onComplete?: () => void;
+    onComplete?: (importResponse?: ImportResponse) => void;
+    onClose?: (importResponse?: ImportResponse) => void;
 }
 
 export function ImportMembersModal({
     open,
     onOpenChange,
-    onComplete
+    onComplete,
+    onClose
 }: ImportMembersModalProps) {
     const [state, dispatch] = useReducer(importReducer, undefined, createInitialImportState);
     const errorCsvUrlRef = useRef<string | null>(null);
+    const {data: configData} = useBrowseConfig();
+    const importMemberTier = configData?.config?.labs?.importMemberTier === true;
+    const fieldMappings = useMemo(() => getFieldMappings({importMemberTier}), [importMemberTier]);
 
     const labelPicker = useLabelPicker({
         selectedSlugs: state.selectedLabelSlugs,
@@ -28,8 +36,10 @@ export function ImportMembersModal({
     });
 
     const revokeErrorCsvUrl = useCallback(() => {
-        if (errorCsvUrlRef.current) {
+        if (errorCsvUrlRef.current && typeof URL.revokeObjectURL === 'function') {
             URL.revokeObjectURL(errorCsvUrlRef.current);
+            errorCsvUrlRef.current = null;
+        } else if (errorCsvUrlRef.current) {
             errorCsvUrlRef.current = null;
         }
     }, []);
@@ -50,10 +60,12 @@ export function ImportMembersModal({
             return;
         }
         if (!isOpen) {
+            const importResponse = state.importResponse ?? undefined;
             reset();
+            onClose?.(importResponse);
         }
         onOpenChange(isOpen);
-    }, [onOpenChange, reset, state.status]);
+    }, [onClose, onOpenChange, reset, state.importResponse, state.status]);
 
     useEffect(() => {
         if (!state.file) {
@@ -71,7 +83,7 @@ export function ImportMembersModal({
                 const data = parseCSV(text);
 
                 if (data.length > 0) {
-                    const detectedMapping = detectFieldTypes(data);
+                    const detectedMapping = detectFieldTypes(data, {importMemberTier});
                     const fieldMapping = new MembersFieldMapping(detectedMapping);
 
                     dispatch({
@@ -123,7 +135,7 @@ export function ImportMembersModal({
                 reader.abort();
             }
         };
-    }, [state.file]);
+    }, [importMemberTier, state.file]);
 
     const validateFile = useCallback((file: File): boolean => {
         const match = /(?:\.([^.]+))?$/.exec(file.name);
@@ -257,7 +269,7 @@ export function ImportMembersModal({
                 type: 'UPLOAD_COMPLETE',
                 importResponse
             });
-            onComplete?.();
+            onComplete?.(importResponse);
         } catch {
             dispatch({
                 type: 'UPLOAD_ERROR',
@@ -317,6 +329,7 @@ export function ImportMembersModal({
                 {(state.status === 'MAPPING' || state.status === 'UPLOADING') && (
                     <MappingStep
                         dataPreviewIndex={state.dataPreviewIndex}
+                        fieldMappings={fieldMappings}
                         fileData={state.fileData}
                         hasNextRecord={hasNextRecord}
                         hasPrevRecord={hasPrevRecord}

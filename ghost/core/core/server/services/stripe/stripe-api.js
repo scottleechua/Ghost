@@ -4,6 +4,7 @@ const {VersionMismatchError} = require('@tryghost/errors');
 const debug = require('@tryghost/debug')('stripe');
 const ghostConfig = require('../../../shared/config');
 const Stripe = require('stripe').Stripe;
+const {t} = require('../i18n');
 
 /* Stripe has the following rate limits:
 *  - For most APIs, 100 read requests per second in live mode, 25 read requests per second in test mode
@@ -679,6 +680,66 @@ module.exports = class StripeAPI {
 
         // @ts-ignore
         const session = await this._stripe.checkout.sessions.create(stripeSessionOptions);
+        return session;
+    }
+
+    /**
+     * Create a new Stripe Checkout Session for a gift subscription.
+     *
+     * @param {object} options
+     * @param {number} options.amount
+     * @param {string} options.currency
+     * @param {string} options.tierName
+     * @param {'month'|'year'} options.cadence
+     * @param {number} options.duration
+     * @param {object} options.metadata
+     * @param {string} options.successUrl
+     * @param {string} options.cancelUrl
+     * @param {ICustomer|null} options.customer
+     * @param {string} [options.customerEmail]
+     *
+     * @returns {Promise<ICheckoutSession>}
+     */
+    async createGiftCheckoutSession({amount, currency, tierName, cadence, duration, metadata, successUrl, cancelUrl, customer, customerEmail}) {
+        await this._rateLimitBucket.throttle();
+
+        const cadenceLabel = cadence === 'year' ?
+            t('{count} year', {count: duration}) :
+            t('{count} month', {count: duration});
+
+        const stripeSessionOptions = {
+            mode: 'payment',
+            success_url: successUrl,
+            cancel_url: cancelUrl,
+            automatic_tax: {
+                enabled: this._config.enableAutomaticTax
+            },
+            metadata,
+            customer: customer ? customer.id : undefined,
+            customer_email: !customer && customerEmail ? customerEmail : undefined,
+            submit_type: 'pay',
+            invoice_creation: {
+                enabled: true
+            },
+            line_items: [{
+                price_data: {
+                    currency,
+                    unit_amount: amount,
+                    product_data: {
+                        name: `${t('Gift subscription')} — ${tierName} (${cadenceLabel})`
+                    }
+                },
+                quantity: 1
+            }]
+        };
+
+        if (customer && this._config.enableAutomaticTax) {
+            stripeSessionOptions.customer_update = {address: 'auto'};
+        }
+
+        // @ts-ignore
+        const session = await this._stripe.checkout.sessions.create(stripeSessionOptions);
+
         return session;
     }
 

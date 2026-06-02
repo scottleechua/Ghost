@@ -16,6 +16,7 @@ const models = require('../../models');
 const {GhostMailer} = require('../mail');
 const jobsService = require('../jobs');
 const tiersService = require('../tiers');
+const giftService = require('../gifts');
 const VerificationTrigger = require('../verification-trigger');
 const {verificationWebhookService} = require('../verification/verification-webhook-service');
 const DatabaseInfo = require('@tryghost/database-info');
@@ -45,26 +46,6 @@ const membersStats = new MembersStats({
 let membersApi;
 let verificationTrigger;
 
-const sendVerificationEmail = async ({subject, message, amountTriggered}) => {
-    const escalationAddress = config.get('hostSettings:emailVerification:escalationAddress');
-    const replyTo = config.get('user_email');
-    const fromAddress = settingsHelpers.getDefaultEmailAddress();
-
-    if (escalationAddress) {
-        await ghostMailer.send({
-            subject,
-            html: tpl(message, {
-                amountTriggered: amountTriggered,
-                siteUrl: urlUtils.getSiteUrl()
-            }),
-            forceTextContent: true,
-            from: fromAddress,
-            replyTo,
-            to: escalationAddress
-        });
-    }
-};
-
 const initMembersCSVImporter = ({stripeAPIService}) => {
     return makeMembersCSVImporter({
         storagePath: config.getContentPath('data'),
@@ -92,6 +73,7 @@ const initMembersCSVImporter = ({stripeAPIService}) => {
 
             return null;
         },
+        getGiftService: () => giftService.service,
         sendEmail: ghostMailer.send.bind(ghostMailer),
         isSet: flag => labsService.isSet(flag),
         addJob: jobsService.addJob.bind(jobsService),
@@ -113,8 +95,6 @@ const initVerificationTrigger = () => {
         isVerified: () => config.get('hostSettings:emailVerification:verified') === true,
         isVerificationRequired: () => settingsCache.get('email_verification_required') === true,
         setVerificationRequired: value => settingsCache.set('email_verification_required', {value}),
-        isVerificationFlowEnabled: () => labsService.isSet('verificationFlow'),
-        sendVerificationEmail,
         sendVerificationWebhook: verificationWebhookService.sendVerificationWebhook.bind(verificationWebhookService),
         membersStats,
         Settings: models.Settings,
@@ -156,6 +136,7 @@ module.exports = {
             cookieSecure: urlUtils.isSSL(urlUtils.getSiteUrl()),
             cookieKeys: [settingsCache.get('theme_session_secret')],
             cookieName: 'ghost-members-ssr',
+            cookiePath: urlUtils.getSubdir() || '/',
             getMembersApi: () => module.exports.api
         });
 

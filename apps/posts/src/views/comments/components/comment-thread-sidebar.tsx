@@ -1,26 +1,19 @@
 import CommentThreadList from './comment-thread-list';
 import React from 'react';
-import {
-    Button,
-    EmptyIndicator,
-    LoadingIndicator,
-    LucideIcon,
-    Separator,
-    Sheet,
-    SheetContent,
-    SheetHeader,
-    SheetTitle
-} from '@tryghost/shade';
+import {Button, EmptyIndicator, LoadingIndicator, Separator, Sheet, SheetContent, SheetHeader, SheetTitle} from '@tryghost/shade/components';
+import {LucideIcon} from '@tryghost/shade/utils';
 import {useReadComment, useThreadComments} from '@tryghost/admin-x-framework/api/comments';
 
 interface CommentThreadSidebarProps {
     commentId: string | null;
+    dislikesEnabled: boolean;
     open: boolean;
     onOpenChange: (open: boolean) => void;
 }
 
 const CommentThreadSidebar: React.FC<CommentThreadSidebarProps> = ({
     commentId,
+    dislikesEnabled,
     open,
     onOpenChange
 }) => {
@@ -32,11 +25,13 @@ const CommentThreadSidebar: React.FC<CommentThreadSidebarProps> = ({
         hasNextPage,
         isFetchingNextPage
     } = useThreadComments(commentId ?? '', {
+        dislikesEnabled,
         enabled: open && !!commentId
     });
 
     // Fetch the selected comment separately using the read endpoint
     const {data: selectedData, isLoading: isLoadingSelected, isError: isSelectedError} = useReadComment(commentId ?? '', {
+        dislikesEnabled,
         enabled: open && !!commentId
     });
 
@@ -102,6 +97,7 @@ const CommentThreadSidebar: React.FC<CommentThreadSidebarProps> = ({
                         </div>
                     ) : (
                         <CommentThreadList
+                            dislikesEnabled={dislikesEnabled}
                             fetchNextPage={fetchNextPage}
                             hasNextPage={hasNextPage}
                             isFetchingNextPage={isFetchingNextPage}

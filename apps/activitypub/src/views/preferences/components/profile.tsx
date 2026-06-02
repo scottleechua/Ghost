@@ -6,7 +6,9 @@ import ProfileCardShadow from '@assets/images/profile-card-shadow.png';
 import ProfileCardShadowSquare from '@assets/images/profile-card-shadow-square.png';
 import html2canvas from 'html2canvas-objectfit-fix';
 import {Account} from '@src/api/activitypub';
-import {Button, H2, LoadingIndicator, LucideIcon, Skeleton, ToggleGroup, ToggleGroupItem, Tooltip, TooltipContent, TooltipProvider, TooltipTrigger} from '@tryghost/shade';
+import {Button, LoadingIndicator, Skeleton, ToggleGroup, ToggleGroupItem, Tooltip, TooltipContent, TooltipProvider, TooltipTrigger} from '@tryghost/shade/components';
+import {H2} from '@tryghost/shade/primitives';
+import {LucideIcon} from '@tryghost/shade/utils';
 import {imageUrlToDataUrl} from '@src/utils/image';
 import {toast} from 'sonner';
 import {useBrowseSite} from '@tryghost/admin-x-framework/api/site';
@@ -403,7 +405,7 @@ const Profile: React.FC<ProfileProps> = ({account, isLoading}) => {
                             </a>
                         </div>
                         <Button className={`min-w-[160px] dark:bg-black dark:text-white dark:hover:bg-black/90 ${backgroundColor === 'dark' && 'bg-white text-black hover:bg-gray-50 dark:bg-white dark:text-black dark:hover:bg-gray-50/90'}`} onClick={handleCopy}>
-                            {isProcessing ? <LoadingIndicator color={`${backgroundColor === 'dark' ? 'dark' : 'light'}`} size='sm' /> : <LucideIcon.Copy />}
+                            {isProcessing ? <LoadingIndicator className='!border-current/10 before:!bg-current' size='sm' /> : <LucideIcon.Copy />}
                             {!isProcessing && 'Copy image'}
                         </Button>
                     </div>

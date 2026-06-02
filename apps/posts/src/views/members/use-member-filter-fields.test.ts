@@ -1,3 +1,4 @@
+import {ValueSource} from '@tryghost/shade/patterns';
 import {
     buildOfferOptions,
     fromOfferFilterDisplayValues,
@@ -16,25 +17,21 @@ vi.mock('@tryghost/shade', () => ({
     })
 }));
 
-vi.mock('@src/components/label-picker/label-filter-renderer', () => ({
-    default: () => null
-}));
-
 describe('useMemberFilterFields', () => {
+    const labelValueSource = {id: 'labels', useOptions: vi.fn()} as unknown as ValueSource<string>;
+    const postValueSource = {id: 'posts', useOptions: vi.fn()} as unknown as ValueSource<string>;
+    const emailValueSource = {id: 'emails', useOptions: vi.fn()} as unknown as ValueSource<string>;
+    const tierValueSource = {id: 'tiers', useOptions: vi.fn()} as unknown as ValueSource<string>;
+
     it('hydrates grouped member fields from the local schema', () => {
         const {result} = renderHook(() => useMemberFilterFields({
-            labelsOptions: [{value: 'vip', label: 'VIP'}],
+            labelValueSource,
             newsletters: [{slug: 'weekly', name: 'Weekly', status: 'active'}],
             paidMembersEnabled: true,
             emailFiltersEnabled: true,
-            postResourceOptions: [{value: 'post_1', label: 'Welcome'}],
-            onPostResourceSearchChange: vi.fn(),
-            postResourceSearchValue: 'wel',
-            postResourceLoading: false,
-            emailResourceOptions: [{value: 'email_1', label: 'Launch'}],
-            onEmailResourceSearchChange: vi.fn(),
-            emailResourceSearchValue: 'lau',
-            emailResourceLoading: false,
+            postValueSource,
+            emailValueSource,
+            tierValueSource,
             offers: [{id: 'offer_1', name: 'Offer', redemption_type: 'signup', cadence: 'month'} as never],
             membersTrackSources: true,
             emailTrackOpens: true,
@@ -55,19 +52,20 @@ describe('useMemberFilterFields', () => {
         const emailPostField = emailFields.find(field => field.key === 'emails.post_id');
 
         expect(labelField?.operators?.map(operator => operator.value)).toEqual(memberFields.label.operators);
-        expect(labelField?.options).toEqual([{value: 'vip', label: 'VIP'}]);
+        expect(labelField).toMatchObject({
+            options: [],
+            valueSource: labelValueSource
+        });
         expect(labelField?.customRenderer).toBeTypeOf('function');
 
         expect(signupField).toMatchObject({
-            options: [{value: 'post_1', label: 'Welcome'}],
-            searchValue: 'wel',
-            isLoading: false
+            options: [],
+            valueSource: postValueSource
         });
 
         expect(emailPostField).toMatchObject({
-            options: [{value: 'email_1', label: 'Launch'}],
-            searchValue: 'lau',
-            isLoading: false
+            options: [],
+            valueSource: emailValueSource
         });
     });
 
@@ -90,10 +88,7 @@ describe('useMemberFilterFields', () => {
     it('keeps the feedback filter visible without a separate feature flag', () => {
         const {result} = renderHook(() => useMemberFilterFields({
             emailFiltersEnabled: true,
-            emailResourceOptions: [{value: 'email_1', label: 'Launch'}],
-            onEmailResourceSearchChange: vi.fn(),
-            emailResourceSearchValue: 'lau',
-            emailResourceLoading: false,
+            emailValueSource,
             siteTimezone: 'UTC'
         }));
 
@@ -101,9 +96,8 @@ describe('useMemberFilterFields', () => {
         const feedbackField = emailFields.find(field => field.key === 'newsletter_feedback');
 
         expect(feedbackField).toMatchObject({
-            options: [{value: 'email_1', label: 'Launch'}],
-            searchValue: 'lau',
-            isLoading: false
+            options: [],
+            valueSource: emailValueSource
         });
     });
 
@@ -165,6 +159,18 @@ describe('useMemberFilterFields', () => {
         });
     });
 
+    it('includes the gift status option', () => {
+        const {result} = renderHook(() => useMemberFilterFields({
+            paidMembersEnabled: true,
+            siteTimezone: 'UTC'
+        }));
+
+        const subscriptionFields = result.current.find(group => group.group === 'Subscription')?.fields ?? [];
+        const statusField = subscriptionFields.find(field => field.key === 'status');
+
+        expect(statusField?.options?.map(o => o.value)).toEqual(['paid', 'free', 'comped', 'gift']);
+    });
+
     it('hydrates grouped retention offers on the offer field', () => {
         const {result} = renderHook(() => useMemberFilterFields({
             paidMembersEnabled: true,
@@ -201,6 +207,35 @@ describe('useMemberFilterFields', () => {
         const offerField = subscriptionFields.find(field => field.key === 'offer_redemptions');
 
         expect(offerField?.customValueRenderer?.(['offer_month_1'], offerField.options || [])).toBe('Retention A');
+    });
+
+    it('includes relative operators and the renderer on date fields', () => {
+        const {result} = renderHook(() => useMemberFilterFields({
+            paidMembersEnabled: true,
+            siteTimezone: 'UTC'
+        }));
+
+        const basicFields = result.current.find(group => group.group === 'Basic')?.fields ?? [];
+        const subscriptionFields = result.current.find(group => group.group === 'Subscription')?.fields ?? [];
+        const dateFields = [
+            basicFields.find(field => field.key === 'created_at'),
+            basicFields.find(field => field.key === 'last_seen_at'),
+            subscriptionFields.find(field => field.key === 'subscriptions.start_date'),
+            subscriptionFields.find(field => field.key === 'subscriptions.current_period_end')
+        ];
+
+        for (const field of dateFields) {
+            expect(field).toBeDefined();
+            expect(field?.customRenderer).toBeTypeOf('function');
+        }
+
+        const createdAt = basicFields.find(field => field.key === 'created_at');
+        const periodEnd = subscriptionFields.find(field => field.key === 'subscriptions.current_period_end');
+        expect(createdAt?.customRenderer).toBeTypeOf('function');
+        expect(createdAt?.operators?.map(op => op.value)).toContain('in-the-last');
+
+        expect(periodEnd?.customRenderer).toBeTypeOf('function');
+        expect(periodEnd?.operators?.map(op => op.value)).toContain('in-the-next');
     });
 });
 

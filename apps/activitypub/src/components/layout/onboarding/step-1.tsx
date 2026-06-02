@@ -2,7 +2,9 @@ import APAvatar from '@src/components/global/ap-avatar';
 import React, {useState} from 'react';
 import apNodes from '@assets/images/onboarding/ap-nodes.png';
 import apNodesDark from '@assets/images/onboarding/ap-nodes-dark.png';
-import {Button, H3, LucideIcon, Skeleton} from '@tryghost/shade';
+import {Button, Skeleton} from '@tryghost/shade/components';
+import {H3} from '@tryghost/shade/primitives';
+import {LucideIcon} from '@tryghost/shade/utils';
 import {sanitizeHtml} from '@src/utils/content-formatters';
 import {useAccountForUser} from '@src/hooks/use-activity-pub-queries';
 import {useBrowseUsers} from '@tryghost/admin-x-framework/api/users';
@@ -59,7 +61,7 @@ const Step1: React.FC = () => {
                                 }}
                                 size='md'
                             />
-                            <span className='flex h-5 items-center gap-1 rounded-full bg-gray-100 px-3 text-[11px] font-medium text-gray-700 uppercase dark:bg-gray-925/70 dark:text-gray-500'>
+                            <span className='flex h-5 items-center gap-1 rounded-full bg-gray-100 px-3 text-[11px] font-medium text-gray-700 uppercase dark:bg-gray-950/70 dark:text-gray-500'>
                                 <LucideIcon.Check className='ml-[-2px]' size={14} />
                             Following
                             </span>
