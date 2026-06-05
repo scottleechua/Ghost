@@ -5,13 +5,14 @@ Contains:
 - `customize-sodosearch.zsh`
 
 ## Local Dev Setup
-Last worked on a Mac (Apple Silicon) with Node v22.18.0, Perl 5.34.1, and Yarn 1.22.22.
+Last worked on a Mac (Apple Silicon) with Node v22.22.2, Perl 5.34.1, and pnpm 11.4.0.
 
 **Important: Docker should be open before running the below commands.**
 
 ```bash
 git clone --recurse-submodules git@github.com:scottleechua/Ghost.git && cd Ghost
-yarn setup
+# corepack enable pnpm # only if not already installed via brew
+pnpm run setup
 ```
 
 ## Customize Portal

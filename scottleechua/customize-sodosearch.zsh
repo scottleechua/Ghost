@@ -63,8 +63,8 @@ sed -i '' 's|dynamicRequireTargets: SUPPORTED_LOCALES.map(locale => `../../ghost
 
 echo "Build started..."
 
-# Run yarn build
-(cd "$GHOST_ROOT/apps/sodo-search" && yarn build)
+# Run pnpm build
+(cd "$GHOST_ROOT/apps/sodo-search" && pnpm build)
 
 echo "Build completed."
 
