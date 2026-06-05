@@ -159,12 +159,12 @@ PORTAL_VITE_CONFIG="$GHOST_ROOT/apps/portal/vite.config.mjs"
 # Create a backup of the original config
 cp "$PORTAL_VITE_CONFIG" "${PORTAL_VITE_CONFIG}.backup"
 # Modify the config to only include English translations
-sed -i '' 's|dynamicRequireTargets: SUPPORTED_LOCALES.map(locale => `../../ghost/i18n/locales/${locale}/portal.json`)|dynamicRequireTargets: ['\''../../ghost/i18n/locales/en/portal.json'\'']|' "$PORTAL_VITE_CONFIG"
+sed -i '' "s|dynamicRequireTargets: \['../../ghost/i18n/locales/\*/portal.json'\]|dynamicRequireTargets: ['../../ghost/i18n/locales/en/portal.json']|" "$PORTAL_VITE_CONFIG"
 
 echo "Build started..."
 
-# Run yarn build
-(cd "$GHOST_ROOT/apps/portal" && yarn build)
+# Run pnpm build
+(cd "$GHOST_ROOT/apps/portal" && pnpm build)
 
 echo "Build completed."
 
