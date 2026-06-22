@@ -16,9 +16,9 @@
   "module": "./dist/admin-x-settings.js",
   "exports": {
     ".": {
+      "types": "./src/index.tsx",
       "import": "./dist/admin-x-settings.js",
-      "require": "./dist/admin-x-settings.umd.cjs",
-      "types": "./src/index.tsx"
+      "require": "./dist/admin-x-settings.umd.cjs"
     },
     "./src/*": {
       "import": "./src/*.tsx",
@@ -83,6 +83,8 @@
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:",
     "@types/validator": "catalog:",
+    "@typescript-eslint/eslint-plugin": "catalog:",
+    "@typescript-eslint/parser": "catalog:",
     "@vitest/coverage-v8": "catalog:",
     "eslint": "catalog:",
     "eslint-plugin-react-hooks": "catalog:",
