@@ -144,6 +144,9 @@ Caddyfile
 # Admin
 /ghost/admin/dist
 
+# Admin Toolbar
+/apps/admin-toolbar/umd
+
 # Comments-UI
 /apps/comments-ui/umd
 /apps/comments-ui/playwright-report
@@ -171,6 +174,8 @@ Caddyfile
 # Build files
 /apps/*/build
 /ghost/*/build
+/koenig/*/build
+/packages/**/build
 # Typescript build artifacts
 tsconfig.tsbuildinfo
 
@@ -216,3 +221,5 @@ yalc.lock
 .env.tinybird
 .cursor/rules/nx-rules.mdc
 .github/instructions/nx.instructions.md
+
+.nx/migrate-runs

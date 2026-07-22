@@ -28,29 +28,30 @@ const postMatcherShallowIncludes = Object.assign(
 
 async function trackDb(fn, skip) {
     const db = require('../../../core/server/data/db');
-    if (db?.knex?.client?.config?.client !== 'sqlite3') {
+    if (db?.knex?.client?.config?.client !== 'better-sqlite3') {
         return skip();
     }
-    /** @type {import('sqlite3').Database} */
-    const database = db.knex.client;
+
+    /** @type {import('knex').Knex.Client} */
+    const client = db.knex.client;
 
     const queries = [];
     function handler(/** @type {{sql: string}} */ query) {
         queries.push(query);
     }
 
-    database.on('query', handler);
+    client.on('query', handler);
 
     await fn();
 
-    database.off('query', handler);
+    client.off('query', handler);
 
     return queries;
 }
 
 // trackDb introspects sqlite query traffic, so its tests are sqlite-only; the
 // invalid-filter test is mysql-only. Decided at registration from NODE_ENV
-// (vitest has no runtime this.skip). (PLA-153)
+// (vitest has no runtime this.skip).
 const isMySQL = (process.env.NODE_ENV || '').includes('mysql');
 
 describe('Posts Content API', function () {
@@ -64,7 +65,7 @@ describe('Posts Content API', function () {
         // Assign a newsletter to one of the posts
         const newsletterId = testUtils.DataGenerator.Content.newsletters[0].id;
         const postId = testUtils.DataGenerator.Content.posts[0].id;
-        await models.Post.edit({newsletter_id: newsletterId}, {id: postId});
+        await models.Post.edit({newsletter_id: newsletterId}, {id: postId, context: {internal: true}});
     });
 
     it('Can request posts', async function () {
@@ -484,7 +485,7 @@ describe('Posts Content API', function () {
             published_at: publishedAt,
             slug: 'consistent-ordering-1',
             tags: [{slug: 'consistent-order-test'}],
-            mobiledoc: testUtils.DataGenerator.markdownToMobiledoc('post 1')
+            lexical: testUtils.DataGenerator.markdownToLexical('post 1')
         }, {context: {internal: true}});
 
         const post2 = await models.Post.add({
@@ -493,7 +494,7 @@ describe('Posts Content API', function () {
             published_at: publishedAt,
             slug: 'consistent-ordering-2',
             tags: [{slug: 'consistent-order-test'}],
-            mobiledoc: testUtils.DataGenerator.markdownToMobiledoc('post 2')
+            lexical: testUtils.DataGenerator.markdownToLexical('post 2')
         }, {context: {internal: true}});
 
         const page1Response = await agent

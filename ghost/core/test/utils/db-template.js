@@ -3,7 +3,6 @@ const path = require('path');
 const fs = require('fs-extra');
 const knex = require('knex');
 const KnexMigrator = require('knex-migrator');
-const {sequence} = require('@tryghost/promise');
 
 const config = require('../../core/shared/config');
 const db = require('../../core/server/data/db');
@@ -17,8 +16,7 @@ const {deriveMySQLTemplateDatabase, deriveSQLiteTemplateFilename} = require('./d
 // insert every default fixture). On MySQL each step is a network round-trip; on
 // sqlite each is a file write. The DB-suite runner's `isolate:true` projects run
 // every test FILE in a fresh fork, so without help each file pays that full init
-// once — the bulk of the acceptance-test runtime regression (PLA-165 mysql,
-// PLA-172 sqlite).
+// once — the bulk of the acceptance-test runtime regression.
 //
 // Instead we build ONE migrated + seeded "template" database for the whole run
 // (in the vitest globalSetup, before any fork spawns) and have each fork RESTORE
@@ -30,9 +28,9 @@ const {deriveMySQLTemplateDatabase, deriveSQLiteTemplateFilename} = require('./d
 // replaying the template's schema from its sqlite_master, and bulk-copying every
 // table with `INSERT ... SELECT`. We deliberately do NOT copy the template .db
 // file over a fork's open connection — that approach destabilized sqlite read
-// order for order-dependent tests and was reverted (PLA-165); building the fork
+// order for order-dependent tests and was reverted; building the fork
 // DB from the template's CONTENTS via SQL keeps physical row order identical to a
-// fresh init (PLA-172).
+// fresh init.
 //
 // Readiness is published from globalSetup to the forks via an env var (forks
 // inherit the main process env at spawn time). When it is unset — e.g.
@@ -42,8 +40,8 @@ const {deriveMySQLTemplateDatabase, deriveSQLiteTemplateFilename} = require('./d
 // SCOPE: only the db.reset() provisioning path (agentProvider-based e2e / e2e-api
 // / e2e-* suites) uses this. The getFixtureOps `testUtils.setup()` path
 // (integration/legacy) opens Ghost's bookshelf connection BEFORE provisioning, so
-// that path still does a full init. See the PLA-165 / PLA-171 notes for the
-// deferred follow-up.
+// that path still does a full init — those suites run isolate:true (a fresh
+// process per file), so the per-file boot, not provisioning, is their cost.
 
 const TEMPLATE_ENV_VAR = 'GHOST_TEST_DB_TEMPLATE_READY';
 
@@ -54,7 +52,7 @@ const getResetTables = () => {
 // Client detection from config (NOT db.knex) for the build/teardown paths, which
 // run in globalSetup where touching db.knex would bind Ghost's singleton
 // connection to a template location.
-const configuredClientIsSQLite = () => config.get('database:client') === 'sqlite3';
+const configuredClientIsSQLite = () => ['sqlite3', 'better-sqlite3'].includes(config.get('database:client'));
 
 /**
  * Whether the shared template has been built for this run (published by
@@ -191,8 +189,8 @@ const buildTemplate = async (base) => {
  * template: replay every sqlite_master object's DDL in creation (rowid) order —
  * tables, then their indexes, triggers and views, which always follow their table
  * in that order — then bulk-copy each table's rows, foreign keys off during the
- * load. This keeps physical row order identical to a fresh init (PLA-172) — we do
- * NOT copy the template file over the connection, the approach reverted in PLA-165.
+ * load. This keeps physical row order identical to a fresh init — we do
+ * NOT copy the template file over the connection (the previously-reverted approach).
  */
 const restoreFromTemplateSQLite = async () => {
     const templateFile = getForkTemplateFilename();
@@ -227,7 +225,7 @@ const restoreFromTemplateSQLite = async () => {
         // reference one not yet populated. Replaying the template's exact CREATE
         // TABLE DDL (rather than a column-only copy) preserves its foreign keys,
         // making the restore byte-faithful to a fresh init — the same faithfulness
-        // the mysql path needs (PLA-165/PLA-172).
+        // the mysql path needs.
         await run('PRAGMA foreign_keys = OFF');
         try {
             for (const object of objects) {
@@ -247,10 +245,10 @@ const restoreFromTemplateSQLite = async () => {
                 'SELECT name FROM template.sqlite_master WHERE type = ?', ['table']
             )).map(row => row.name);
 
-            await sequence(dataTables.map(table => async () => {
+            for (const table of dataTables) {
                 await run('DELETE FROM ??', [table]);
                 await run('INSERT INTO ?? SELECT * FROM template.??', [table, table]);
-            }));
+            }
         } finally {
             await run('PRAGMA foreign_keys = ON');
         }
@@ -304,15 +302,15 @@ const restoreFromTemplate = async () => {
     // surfacing as extra rows in attribution / activity-feed snapshots. The DDL
     // string is unqualified, so replaying it on the fork's connection creates the
     // table in the fork DB; its FK REFERENCES resolve to the fork's own copies.
-    // This makes the restore byte-faithful to a fresh init (PLA-165).
+    // This makes the restore byte-faithful to a fresh init.
     await db.knex.raw('SET FOREIGN_KEY_CHECKS=0;');
     try {
-        await sequence(tables.map(table => async () => {
+        for (const table of tables) {
             const [[{'Create Table': createTableSql}]] = await db.knex.raw('SHOW CREATE TABLE ??.??', [templateDb, table]);
             await db.knex.schema.dropTableIfExists(table);
             await db.knex.raw(createTableSql);
             await db.knex.raw('INSERT INTO ?? SELECT * FROM ??.??', [table, templateDb, table]);
-        }));
+        }
     } finally {
         await db.knex.raw('SET FOREIGN_KEY_CHECKS=1;');
     }
@@ -320,13 +318,12 @@ const restoreFromTemplate = async () => {
     // The table copy above only covers base tables; views are not in
     // getResetTables (the existing snapshot path relies on init() having created
     // them once). Recreate them here from the schema definitions, exactly as
-    // migrations/init/1-create-tables.js does, so a template-provisioned fork DB
-    // has the same views as a fully-migrated one. (sqlite copies views as part of
-    // the sqlite_master replay above, so this is mysql-only.)
+    // migrations/init/1-create-tables.js does — through commands.createViewOrReplace
+    // so the fork's views get the same SQL SECURITY INVOKER as a fully-migrated one
+    // (a plain knex createViewOrReplace would default to DEFINER on MySQL). (sqlite
+    // copies views as part of the sqlite_master replay above, so this is mysql-only.)
     for (const [name, sql] of Object.entries(schemaViews)) {
-        await db.knex.schema.createViewOrReplace(name, function (view) {
-            view.as(db.knex.raw(sql));
-        });
+        await schemaModule.commands.createViewOrReplace(name, sql, db.knex);
     }
 };
 

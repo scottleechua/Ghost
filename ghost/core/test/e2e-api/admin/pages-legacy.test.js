@@ -36,7 +36,7 @@ describe('Pages API', function () {
 
         // Absolute urls by default. Match pages by url rather than by sort index:
         // fixture pages are seeded with near-identical timestamps, so the relative
-        // order of same-status pages is not stable across databases (PLA-165).
+        // order of same-status pages is not stable across databases.
         const draftPage = jsonResponse.pages.find(page => /\/p\/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\//.test(new URL(page.url).pathname));
         assertExists(draftPage);
         const contributePage = jsonResponse.pages.find(page => new URL(page.url).pathname === '/contribute/');
@@ -129,8 +129,9 @@ describe('Pages API', function () {
         const additionalProperties = ['reading_time'];
         localUtils.API.checkResponse(returnedPage, 'page', additionalProperties);
 
-        assert.equal(returnedPage.mobiledoc, page.mobiledoc);
-        assert.equal(returnedPage.lexical, null);
+        // mobiledoc input is converted to lexical on save
+        assert.equal(returnedPage.mobiledoc, null);
+        assert.ok(returnedPage.lexical.includes('Testing post creation with mobiledoc'));
     });
 
     it('Can add a page with lexical', async function () {

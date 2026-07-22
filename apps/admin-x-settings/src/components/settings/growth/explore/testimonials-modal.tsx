@@ -2,8 +2,9 @@ import AliAbdaal from '../../../../assets/images/ali-abdaal.png';
 import IsaacSaul from '../../../../assets/images/isaac-saul.png';
 import JoelWarner from '../../../../assets/images/joel-warner.png';
 import NiceModal, {useModal} from '@ebay/nice-modal-react';
-import {Avatar, Button, Form, Modal, Select, TextArea, showToast} from '@tryghost/admin-x-design-system';
-import {generateAvatarColor, getInitials} from '../../../../utils/helpers';
+import React from 'react';
+import {Avatar, Field, FieldError, FieldLabel, Select, SelectContent, SelectItem, SelectTrigger, SelectValue} from '@tryghost/shade/components';
+import {Button, Form, Modal, TextArea, showToast} from '@tryghost/admin-x-design-system';
 import {getSettingValues} from '@tryghost/admin-x-framework/api/settings';
 import {useForm, useHandleError} from '@tryghost/admin-x-framework/hooks';
 import {useGlobalData} from '../../../providers/global-data-provider';
@@ -15,6 +16,7 @@ interface FormState {
 }
 
 const TestimonialsModal = NiceModal.create(() => {
+    const platformErrorId = React.useId();
     const {updateRoute} = useRouting();
     const handleError = useHandleError();
     const modal = useModal();
@@ -111,7 +113,7 @@ const TestimonialsModal = NiceModal.create(() => {
                 <div className='flex items-stretch'>
                     <div className='hidden w-full flex-col justify-between bg-gradient-to-tl from-grey-100/50 to-grey-100/80 p-8 dark:from-grey-900/40 dark:to-grey-900/60 [@media(min-width:905px)]:visible! [@media(min-width:905px)]:flex!'>
                         <div className='pr-6'>
-                            <div className='relative rounded-xl bg-white px-3 py-2.5 text-md text-grey-700 italic shadow-lg before:absolute before:-bottom-1.5 before:left-5 before:block before:size-3 before:rotate-45 before:bg-white dark:bg-black dark:text-grey-300 before:dark:bg-black'>
+                            <div className='relative rounded-xl bg-white px-3 py-2.5 text-md text-grey-700 italic shadow-lg before:absolute before:-bottom-1.5 before:left-5 before:block before:size-3 before:rotate-45 before:bg-white dark:bg-black dark:text-grey-300 dark:before:bg-black'>
                                 Moving to Ghost has proven to be one of the best business decisions we’ve made as an independent media outlet.
                             </div>
                             <div className='mt-[14px] ml-2 flex items-center gap-2'>
@@ -126,7 +128,7 @@ const TestimonialsModal = NiceModal.create(() => {
                         </div>
 
                         <div className='mt-8 ml-6'>
-                            <div className='relative rounded-xl bg-white px-3 py-2.5 text-md text-grey-700 italic shadow-lg before:absolute before:right-5 before:-bottom-1.5 before:block before:size-3 before:rotate-45 before:bg-white dark:bg-black dark:text-grey-300 before:dark:bg-black'>
+                            <div className='relative rounded-xl bg-white px-3 py-2.5 text-md text-grey-700 italic shadow-lg before:absolute before:right-5 before:-bottom-1.5 before:block before:size-3 before:rotate-45 before:bg-white dark:bg-black dark:text-grey-300 dark:before:bg-black'>
                                 It has now been one year since I quit my full-time job to go all in on Tangle. Today, we have 50,000+ paying subscribers. That’s roughly $5M in gross yearly revenue ... it’s the best paying job I’ve ever had.
                             </div>
                             <div className='mt-[14px] mr-2 flex items-center justify-end gap-2'>
@@ -141,7 +143,7 @@ const TestimonialsModal = NiceModal.create(() => {
                         </div>
 
                         <div className='mt-8 hidden pr-6 [@media(min-width:940px)]:visible! [@media(min-width:940px)]:block!'>
-                            <div className='relative rounded-xl bg-white px-3 py-2.5 text-md text-grey-700 italic shadow-lg before:absolute before:-bottom-1.5 before:left-5 before:block before:size-3 before:rotate-45 before:bg-white dark:bg-black dark:text-grey-300 before:dark:bg-black'>
+                            <div className='relative rounded-xl bg-white px-3 py-2.5 text-md text-grey-700 italic shadow-lg before:absolute before:-bottom-1.5 before:left-5 before:block before:size-3 before:rotate-45 before:bg-white dark:bg-black dark:text-grey-300 dark:before:bg-black'>
                                 You should be using Ghost because it’s absolutely amazing and I love it. It’s what I’ve been using for all my sites since 2016.
                             </div>
                             <div className='mt-[14px] ml-2 flex items-center gap-2'>
@@ -182,7 +184,7 @@ const TestimonialsModal = NiceModal.create(() => {
                             </div>
                             <div className='mt-4 ml-0.5'>
                                 <div className='flex items-center gap-2'>
-                                    <Avatar bgColor={generateAvatarColor((staffUserName ? staffUserName : staffUserEmail))} image={staffUserProfileImage ?? undefined} label={getInitials(staffUserName)} labelColor='white' size='md' />
+                                    <Avatar className='size-10' email={staffUserEmail} name={staffUserName} src={staffUserProfileImage} />
                                     <div className='flex flex-col'>
                                         <span className='font-medium'>By {staffUserName ? staffUserName : staffUserEmail}</span>
                                         <span className='text-sm text-grey-700'>{staffUserRole} — {siteTitle}</span>
@@ -193,18 +195,24 @@ const TestimonialsModal = NiceModal.create(() => {
                         <div>
                             <div className='mt-2 flex items-center gap-4'>
                                 <div className='grow'>
-                                    <Select
-                                        error={Boolean(errors.prev_platform)}
-                                        hint={errors.prev_platform}
-                                        options={migratedFromOptions}
-                                        placeholder='Previous platform'
-                                        selectedOption={migratedFromOptions.find(option => option.value === formState.prev_platform)}
-                                        testId='migrated-from'
-                                        onSelect={(option) => {
-                                            updateForm(state => ({...state, prev_platform: option?.value || ''}));
-                                            clearError('prev_platform');
-                                        }}
-                                    />
+                                    <Field data-invalid={Boolean(errors.prev_platform) || undefined}>
+                                        <FieldLabel className='sr-only'>Previous platform</FieldLabel>
+                                        <Select
+                                            value={formState.prev_platform}
+                                            onValueChange={(value) => {
+                                                updateForm(state => ({...state, prev_platform: value}));
+                                                clearError('prev_platform');
+                                            }}
+                                        >
+                                            <SelectTrigger aria-describedby={errors.prev_platform ? platformErrorId : undefined} aria-invalid={Boolean(errors.prev_platform) || undefined} aria-label='Previous platform' data-testid='migrated-from'>
+                                                <SelectValue placeholder='Previous platform' />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                                {migratedFromOptions.map(option => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}
+                                            </SelectContent>
+                                        </Select>
+                                        {errors.prev_platform && <FieldError id={platformErrorId}>{errors.prev_platform}</FieldError>}
+                                    </Field>
                                 </div>
                                 <Button
                                     className='h-[38px]! rounded-lg'

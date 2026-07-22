@@ -85,11 +85,19 @@ export const BASE_GHOST_ENV = [
     'mail__options__host=ghost-dev-mailpit',
     'mail__options__port=1025',
 
+    // Staff device verification (new-device 2FA) defaults off in development but ships
+    // on in production. Force it on so the suite stays production-representative and the
+    // 2FA settings UI / sign-in flow render regardless of the dev default.
+    'security__staffDeviceVerification=true',
+
     // Disable IndexNow pings (tests run with real network access)
     'privacy__useIndexNow=false',
 
     // Disable gravatar avatar lookups (real external call, no e2e coverage)
-    'privacy__useGravatar=false'
+    'privacy__useGravatar=false',
+
+    // Disable browser-side Sentry reporting during tests
+    'client_sentry__disabled=true'
 ] as const;
 
 export const TEST_ENVIRONMENT = {
@@ -128,6 +136,7 @@ export const EGRESS_MONITOR_ENABLED = process.env.E2E_EGRESS_MONITOR !== '0';
 // service that should be mocked) surface as a test failure. Set
 // E2E_EGRESS_ENFORCE=0 to record-only, e.g. while expanding the allowlist.
 export const EGRESS_ENFORCE = process.env.E2E_EGRESS_ENFORCE !== '0';
+export const EGRESS_MOCK_RESPONSE_HEADER = 'x-ghost-e2e-mocked-external';
 
 /**
  * Hosts the suite is allowed to reach. An entry matches itself and any subdomain
@@ -165,6 +174,5 @@ export const EGRESS_ALLOWLIST: readonly string[] = [
     // Other third-party services the product uses
     'bunny.net', // web fonts (fonts.bunny.net)
     'transistor.fm', // podcast embeds (partner.transistor.fm)
-    'unsplash.com', // editor image selector (api./images.unsplash.com)
     'geojs.io' // member signup + staff sign-in geolocation (get.geojs.io)
 ];

@@ -218,6 +218,34 @@ describe('oembed-service', function () {
             assert.equal(response.metadata.thumbnail, 'https://m.media-amazon.com/images/I/example-hires.jpg');
         });
 
+        it('does not apply Amazon rules to .co hosts that merely end in "a.co"', async function () {
+            nock('https://www.rangemedia.co')
+                .get('/some-post')
+                .query(true)
+                .reply(200, `<html><head>
+                    <title>Some Post</title>
+                    <meta property="og:site_name" content="RANGE Media">
+                </head></html>`);
+
+            const response = await oembedService.fetchOembedDataFromUrl('https://www.rangemedia.co/some-post', 'bookmark');
+
+            assert.equal(response.metadata.publisher, 'RANGE Media');
+        });
+
+        it('does not apply Amazon rules to subdomain spoofs (amazon.evil.com)', async function () {
+            nock('https://amazon.evil.com')
+                .get('/x')
+                .query(true)
+                .reply(200, `<html><head>
+                    <title>Evil Page</title>
+                    <meta property="og:site_name" content="Evil Site">
+                </head></html>`);
+
+            const response = await oembedService.fetchOembedDataFromUrl('https://amazon.evil.com/x', 'bookmark');
+
+            assert.equal(response.metadata.publisher, 'Evil Site');
+        });
+
         it('should return a bookmark response when the oembed endpoint returns a link type', async function () {
             nock('https://www.example.com')
                 .get('/')
@@ -242,6 +270,217 @@ describe('oembed-service', function () {
             assert.equal(response.type, 'bookmark');
             assert.equal(response.url, 'https://www.example.com');
             assert.equal(response.metadata.title, 'Example');
+        });
+
+        it('enriches other allowlisted provider bookmarks without discarding page metadata', async function () {
+            const knownProviderStub = sinon.stub(oembedService, 'knownProvider')
+                .resolves({
+                    title: 'Vimeo oEmbed title',
+                    author_name: 'Vimeo author',
+                    provider_name: 'Vimeo',
+                    thumbnail_url: 'https://i.vimeocdn.com/video/123.jpg'
+                });
+
+            sinon.stub(oembedService, 'processImageFromUrl').callsFake(async imageUrl => imageUrl);
+
+            nock('https://vimeo.com')
+                .get('/123456')
+                .query(true)
+                .reply(200, `<html><head>
+                    <title>Vimeo page title</title>
+                    <meta name="description" content="Vimeo page description">
+                    <link rel="icon" href="https://vimeo.com/favicon.ico">
+                </head></html>`);
+
+            try {
+                const response = await oembedService.fetchOembedDataFromUrl('https://vimeo.com/123456', 'bookmark');
+
+                assert.equal(response.metadata.title, 'Vimeo oEmbed title');
+                assert.equal(response.metadata.description, 'Vimeo page description');
+                assert.equal(response.metadata.author, 'Vimeo author');
+                assert.equal(response.metadata.publisher, 'Vimeo');
+                assert.equal(response.metadata.thumbnail, 'https://i.vimeocdn.com/video/123.jpg');
+                assert.equal(response.metadata.icon, 'https://vimeo.com/favicon.ico');
+                sinon.assert.calledOnce(knownProviderStub);
+            } finally {
+                sinon.restore();
+            }
+        });
+
+        it('falls back to page metadata when YouTube oEmbed fails', async function () {
+            nock('https://www.youtube.com')
+                .get('/oembed')
+                .query(true)
+                .reply(404);
+
+            nock('https://www.youtube.com')
+                .get('/watch')
+                .query({v: 'unavailable'})
+                .reply(200, `<html><head>
+                    <title>Fallback YouTube page title</title>
+                </head></html>`);
+
+            const response = await oembedService.fetchOembedDataFromUrl('https://www.youtube.com/watch?v=unavailable', 'bookmark');
+
+            assert.equal(response.metadata.title, 'Fallback YouTube page title');
+        });
+
+        it('uses bookmark enrichment when the provider page request fails', async function () {
+            const thumbnailUrl = 'https://i.ytimg.com/vi/blocked/hqdefault.jpg';
+            sinon.stub(oembedService, 'processImageFromUrl').resolves('/content/images/thumbnail/youtube.jpg');
+
+            nock('https://www.youtube.com')
+                .get('/oembed')
+                .query(true)
+                .reply(200, {
+                    title: 'YouTube oEmbed title',
+                    author_name: 'YouTube author',
+                    provider_name: 'YouTube',
+                    thumbnail_url: thumbnailUrl,
+                    type: 'video',
+                    version: '1.0'
+                });
+
+            nock('https://www.youtube.com')
+                .get('/watch')
+                .query({v: 'blocked'})
+                .reply(403);
+
+            try {
+                const response = await oembedService.fetchOembedDataFromUrl('https://www.youtube.com/watch?v=blocked', 'bookmark');
+
+                assert.equal(response.metadata.title, 'YouTube oEmbed title');
+                assert.equal(response.metadata.author, 'YouTube author');
+                assert.equal(response.metadata.publisher, 'YouTube');
+                assert.equal(response.metadata.thumbnail, '/content/images/thumbnail/youtube.jpg');
+                assert.equal(response.metadata.icon, 'https://static.ghost.org/v5.0.0/images/link-icon.svg');
+            } finally {
+                sinon.restore();
+            }
+        });
+
+        it('falls back to page metadata when bookmark enrichment times out', async function () {
+            nock('https://www.youtube.com')
+                .get('/oembed')
+                .query(true)
+                .delayConnection(500)
+                .reply(200, {
+                    title: 'Late YouTube oEmbed title',
+                    type: 'video',
+                    version: '1.0'
+                });
+
+            nock('https://www.youtube.com')
+                .get('/watch')
+                .query({v: 'slow'})
+                .reply(200, `<html><head>
+                    <title>Timely YouTube page title</title>
+                </head></html>`);
+
+            const response = await oembedService.fetchOembedDataFromUrl(
+                'https://www.youtube.com/watch?v=slow',
+                'bookmark',
+                {timeout: {request: 200}}
+            );
+
+            assert.equal(response.metadata.title, 'Timely YouTube page title');
+        });
+
+        it('does not process missing bookmark images', async function () {
+            const processImageFromUrlStub = sinon.stub(oembedService, 'processImageFromUrl')
+                .callsFake(async imageUrl => imageUrl);
+
+            try {
+                const response = await oembedService.fetchBookmarkData('https://www.example.com', '<html><head><title>Example</title></head></html>', 'bookmark');
+
+                assert.equal(response.metadata.title, 'Example');
+                assert.equal(response.metadata.thumbnail, null);
+                assert.equal(response.metadata.icon, 'https://static.ghost.org/v5.0.0/images/link-icon.svg');
+                sinon.assert.notCalled(processImageFromUrlStub);
+            } finally {
+                sinon.restore();
+            }
+        });
+
+        // Regression coverage for https://github.com/TryGhost/Ghost/issues/24741
+        // A YouTube bookmark request must build the card from the allowlisted
+        // oEmbed provider metadata (video title/author/publisher/thumbnail)
+        // rather than the generic scraped page, and must never leak the
+        // provider embed HTML into the bookmark card.
+        it('builds a YouTube bookmark card from allowlisted oEmbed provider metadata (#24741)', async function () {
+            const thumbnailUrl = 'https://i.ytimg.com/vi/0i1Xz-xiYSU/hqdefault.jpg';
+            const processImageFromUrlStub = sinon.stub(oembedService, 'processImageFromUrl')
+                .resolves('/content/images/thumbnail/youtube.jpg');
+
+            nock('https://www.youtube.com')
+                .get('/watch')
+                .query({v: '0i1Xz-xiYSU'})
+                .reply(200, `<html><head>
+                    <title>Generic YouTube page title</title>
+                    <meta name="description" content="Description from the page">
+                </head></html>`);
+
+            nock('https://www.youtube.com')
+                .get('/oembed')
+                .query(true)
+                .reply(200, {
+                    title: 'What happens in the European Space Agency\'s Mission Control?',
+                    author_name: 'Matt Gray',
+                    author_url: 'https://www.youtube.com/@MattGrayYES',
+                    type: 'video',
+                    version: '1.0',
+                    provider_name: 'YouTube',
+                    provider_url: 'https://www.youtube.com/',
+                    thumbnail_url: thumbnailUrl,
+                    html: '<iframe src="https://www.youtube.com/embed/0i1Xz-xiYSU"></iframe>',
+                    width: 200,
+                    height: 113
+                });
+
+            try {
+                const response = await oembedService.fetchOembedDataFromUrl('https://www.youtube.com/watch?v=0i1Xz-xiYSU', 'bookmark');
+
+                assert.equal(response.version, '1.0');
+                assert.equal(response.type, 'bookmark');
+                assert.equal(response.url, 'https://www.youtube.com/watch?v=0i1Xz-xiYSU');
+                assert.equal(response.metadata.url, 'https://www.youtube.com/watch?v=0i1Xz-xiYSU');
+                assert.equal(response.metadata.title, 'What happens in the European Space Agency\'s Mission Control?');
+                assert.equal(response.metadata.description, 'Description from the page');
+                assert.equal(response.metadata.author, 'Matt Gray');
+                assert.equal(response.metadata.publisher, 'YouTube');
+                assert.equal(response.metadata.thumbnail, '/content/images/thumbnail/youtube.jpg');
+                assert.equal(response.metadata.icon, 'https://static.ghost.org/v5.0.0/images/link-icon.svg');
+                sinon.assert.calledOnceWithExactly(processImageFromUrlStub, thumbnailUrl, 'thumbnail');
+                // The provider embed HTML must not leak into the bookmark card
+                assert.equal(response.metadata.html, undefined);
+                assert.equal(response.html, undefined);
+            } finally {
+                sinon.restore();
+            }
+        });
+
+        it('prefers the standard favicon over an apple-touch-icon in the bookmark fallback', async function () {
+            // With no oembed endpoint and no explicit type, fetchOembedDataFromUrl
+            // falls through to the bookmark fallback (!data && !type). That path
+            // resolves to a bookmark card, so it must pick the standard favicon,
+            // not the apple-touch-icon reserved for scaled-up call sites.
+            sinon.stub(oembedService, 'processImageFromUrl').callsFake(async imageUrl => imageUrl);
+
+            nock('https://www.example.com')
+                .get('/')
+                .query(true)
+                .reply(200, `<html><head>
+                    <title>Example</title>
+                    <link rel="apple-touch-icon" sizes="180x180" href="https://www.example.com/apple.png">
+                    <link rel="icon" href="https://www.example.com/favicon.png">
+                </head></html>`);
+
+            const response = await oembedService.fetchOembedDataFromUrl('https://www.example.com');
+
+            assert.equal(response.type, 'bookmark');
+            assert.equal(response.metadata.icon, 'https://www.example.com/favicon.png');
+
+            sinon.restore();
         });
 
         it('converts YT live URLs to watch URLs', async function () {
@@ -380,6 +619,28 @@ describe('oembed-service', function () {
 
     describe('processImageFromUrl', function () {
         const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/;
+
+        it('returns null without fetching when the image URL is missing', async function () {
+            const externalRequest = sinon.stub();
+            const service = new OembedService({
+                config: {
+                    getContentPath() {
+                        return '/tmp/content/images';
+                    }
+                },
+                storage: {
+                    getStorage() {
+                        throw new Error('storage should not be used');
+                    }
+                },
+                externalRequest
+            });
+
+            const storedUrl = await service.processImageFromUrl(null, 'thumbnail');
+
+            assert.equal(storedUrl, null);
+            sinon.assert.notCalled(externalRequest);
+        });
 
         it('stores downloaded bookmark assets via image storage and returns the adapter URL', async function () {
             const imageBytes = Buffer.from('img-bytes');
@@ -626,6 +887,84 @@ describe('oembed-service', function () {
                 call => call.args[0].url.pathname === '/favicon.ico'
             );
             assert.ok(faviconCall, 'beforeRequest hook should have been called for the favicon fetch');
+        });
+    });
+
+    describe('fetchBookmarkData favicon selection', function () {
+        // Icons declared as <link> tags are resolved by metascraper-logo-favicon
+        // directly from the HTML, so these assertions exercise pickFn without
+        // hitting the network favicon probe. The picked icon is normally
+        // post-processed (downloaded for bookmarks, HEAD-checked for mentions),
+        // so we stub both to surface pickFn's raw selection.
+        let service;
+
+        beforeEach(function () {
+            const externalRequest = sinon.stub().resolves({});
+            externalRequest.head = sinon.stub().resolves({});
+            externalRequest.defaults = {options: {}};
+
+            service = new OembedService({
+                config: {get() {
+                    return true;
+                }},
+                externalRequest
+            });
+            sinon.stub(service, 'processImageFromUrl').callsFake(async url => url);
+        });
+
+        afterEach(function () {
+            sinon.restore();
+        });
+
+        const buildHtml = links => `<html><head><title>Test Page</title>${links}</head><body></body></html>`;
+
+        const getIcon = (links, type) => service
+            .fetchBookmarkData('https://example.com/page', buildHtml(links), type)
+            .then(result => result.metadata.icon);
+
+        it('bookmark cards prefer the standard favicon over an apple-touch-icon', async function () {
+            const icon = await getIcon(`
+                <link rel="apple-touch-icon" sizes="180x180" href="https://example.com/apple.png">
+                <link rel="icon" href="https://example.com/favicon.png">
+            `, 'bookmark');
+
+            assert.equal(icon, 'https://example.com/favicon.png');
+        });
+
+        it('bookmark cards prefer an SVG favicon over other standard icons', async function () {
+            const icon = await getIcon(`
+                <link rel="icon" href="https://example.com/favicon.png">
+                <link rel="icon" href="https://example.com/icon.svg">
+            `, 'bookmark');
+
+            assert.equal(icon, 'https://example.com/icon.svg');
+        });
+
+        it('bookmark cards skip mask-icon/fluid-icon silhouettes', async function () {
+            const icon = await getIcon(`
+                <link rel="mask-icon" href="https://example.com/mask.svg" color="#000000">
+                <link rel="fluid-icon" href="https://example.com/fluid.png">
+                <link rel="icon" href="https://example.com/favicon.png">
+            `, 'bookmark');
+
+            assert.equal(icon, 'https://example.com/favicon.png');
+        });
+
+        it('bookmark cards fall back to an apple-touch-icon when no standard favicon exists', async function () {
+            const icon = await getIcon(`
+                <link rel="apple-touch-icon" sizes="180x180" href="https://example.com/apple.png">
+            `, 'bookmark');
+
+            assert.equal(icon, 'https://example.com/apple.png');
+        });
+
+        it('mentions keep the apple-touch-icon priority for the scaled-up avatar', async function () {
+            const icon = await getIcon(`
+                <link rel="apple-touch-icon" sizes="180x180" href="https://example.com/apple.png">
+                <link rel="icon" href="https://example.com/favicon.png">
+            `, 'mention');
+
+            assert.equal(icon, 'https://example.com/apple.png');
         });
     });
 });

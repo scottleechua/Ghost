@@ -8,7 +8,7 @@ import net from 'node:net';
 // connect to their backing service in beforeAll, so they hard-fail locally when
 // the service isn't running. Gating each suite on these flags lets them SKIP
 // cleanly when the service is down and RUN when it's up — CI starts both
-// services, so they always run there. (PLA-170)
+// services, so they always run there.
 
 // 1s, not a few hundred ms: this probe runs in the vitest main process right
 // before the worker forks spawn, when the event loop is busiest (config load,
@@ -21,7 +21,7 @@ const PROBE_TIMEOUT_MS = 1000;
 
 // Resolve a service's host:port the same way the code under test does:
 //   - Redis: nconf maps `adapters:Redis:{host,port}` from these `__`-separated
-//     env vars (core/shared/config/loader.js uses `separator: '__'`); defaults
+//     env vars (core/shared/config/loader.ts uses `separator: '__'`); defaults
 //     match AdapterCacheRedis' 127.0.0.1:6379.
 //   - MinIO: test/utils/minio.ts reads MINIO_TEST_ENDPOINT (default
 //     http://127.0.0.1:9000); parse it for the host + port to probe.

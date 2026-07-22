@@ -18,7 +18,7 @@ import {useWelcomeEmailSenderDetails} from '../../../../hooks/use-welcome-email-
 import TestEmailDropdown from './test-email-dropdown';
 import type {AutomatedEmail} from '@tryghost/admin-x-framework/api/automated-emails';
 
-import {Button, Tabs, TabsList, TabsTrigger} from '@tryghost/shade/components';
+import {Button, Popover, PopoverTrigger, Tabs, TabsList, TabsTrigger} from '@tryghost/shade/components';
 import {cn} from '@tryghost/shade/utils';
 
 interface EmailPreviewModalContentProps {
@@ -37,7 +37,7 @@ const EmailPreviewModalContent = React.forwardRef<
     <div
         ref={ref}
         className={cn(
-            'flex h-full w-full flex-col gap-0 overflow-hidden rounded-xl p-0',
+            'flex size-full flex-col gap-0 overflow-hidden rounded-xl p-0',
             isEditMode ? 'bg-white' : 'bg-gray-100',
             'dark:bg-gray-950',
             className
@@ -68,7 +68,7 @@ interface EmailPreviewEmailHeaderProps {
 
 const EmailPreviewEmailHeader: React.FC<EmailPreviewEmailHeaderProps> = ({children, className}) => (
     <div className={cn(
-        'relative z-20 isolate mx-auto w-full max-w-[780px] rounded-t-lg border border-b-0 border-gray-200 bg-white px-6 py-4 transition-[max-width,padding] duration-300 ease-out motion-reduce:transition-none dark:border-grey-900 dark:bg-grey-950',
+        'relative isolate z-20 mx-auto w-full max-w-[780px] rounded-t-lg border border-b-0 border-gray-200 bg-white px-6 py-4 transition-[max-width,padding] duration-300 ease-out motion-reduce:transition-none dark:border-grey-900 dark:bg-grey-950',
         className
     )}>
         {children}
@@ -82,7 +82,7 @@ interface EmailPreviewBodyProps {
 
 const EmailPreviewBody: React.FC<EmailPreviewBodyProps> = ({children, className}) => (
     <div className={cn(
-        'flex mx-auto w-full rounded-b-lg transition-[max-width,height,padding] duration-300 ease-out motion-reduce:transition-none dark:border-grey-900 dark:shadow-none grow max-w-[780px]',
+        'mx-auto flex w-full max-w-[780px] grow rounded-b-lg transition-[max-width,height,padding] duration-300 ease-out motion-reduce:transition-none dark:border-grey-900 dark:shadow-none',
         className
     )}>
         {children}
@@ -107,9 +107,8 @@ const WelcomeEmailModal = NiceModal.create<WelcomeEmailModalProps>(({emailType =
     const [showTestDropdown, setShowTestDropdown] = useState(false);
     const [mode, setMode] = useState<PreviewMode>('edit');
     const [previewSubjectOverride, setPreviewSubjectOverride] = useState<string | null>(null);
-    const dropdownRef = useRef<HTMLDivElement>(null);
     const normalizedLexical = useRef<string>(automatedEmail?.lexical || '');
-    const hasEditorBeenFocused = useRef(false);
+    const hasEditorBeenInteractedWith = useRef(false);
     const handleError = useHandleError();
     const automatedEmails = automatedEmailsData?.automated_emails || [];
     const {resolvedSenderName, resolvedSenderEmail, resolvedReplyToEmail, hasDistinctReplyTo} = useWelcomeEmailSenderDetails(automatedEmails, {
@@ -148,23 +147,6 @@ const WelcomeEmailModal = NiceModal.create<WelcomeEmailModalProps>(({emailType =
         });
     }, [modal, isDirty]);
 
-    // Close dropdown when clicking outside
-    useEffect(() => {
-        const handleClickOutside = (event: MouseEvent) => {
-            if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
-                setShowTestDropdown(false);
-            }
-        };
-
-        if (showTestDropdown) {
-            document.addEventListener('mousedown', handleClickOutside);
-        }
-
-        return () => {
-            document.removeEventListener('mousedown', handleClickOutside);
-        };
-    }, [showTestDropdown]);
-
     const handleSaveRef = useRef(handleSave);
     useEffect(() => {
         handleSaveRef.current = handleSave;
@@ -198,12 +180,12 @@ const WelcomeEmailModal = NiceModal.create<WelcomeEmailModalProps>(({emailType =
 
     // The editor normalizes content on mount (e.g., processing {name} templates),
     // which triggers onChange even without user edits. We track whether the editor
-    // has ever been focused - normalization happens before focus is possible, so any
-    // onChange before first focus is normalization. After focus, we compare against
-    // the normalized baseline to determine dirty state.
+    // has received user input - the modal can autofocus the editor before normalization
+    // finishes, so focus alone is not evidence of an edit. After user interaction, we
+    // compare against the normalized baseline to determine dirty state.
     const handleEditorChange = useCallback((lexical: string) => {
-        if (!hasEditorBeenFocused.current) {
-            // Editor hasn't been focused yet = must be normalization
+        if (!hasEditorBeenInteractedWith.current) {
+            // Editor hasn't received user input yet = must be normalization
             normalizedLexical.current = lexical;
             setFormState(state => ({...state, lexical}));
             return;
@@ -274,18 +256,19 @@ const WelcomeEmailModal = NiceModal.create<WelcomeEmailModalProps>(({emailType =
                                             <span className='text-gray-500 dark:text-gray-400'>{`<${resolvedSenderEmail}>`}</span>
                                         </span>
                                     </div>
-                                    <div ref={dropdownRef} className='relative'>
-                                        <LegacyButton
-                                            className='border border-grey-200 font-semibold hover:border-grey-300 hover:bg-white! dark:border-grey-900 dark:hover:border-grey-800 dark:hover:bg-grey-950!'
-                                            color="clear"
-                                            icon='send'
-                                            label="Test"
-                                            onClick={() => setShowTestDropdown(!showTestDropdown)}
-                                        />
+                                    <Popover open={showTestDropdown} onOpenChange={setShowTestDropdown}>
+                                        <PopoverTrigger asChild>
+                                            <LegacyButton
+                                                className='border border-control-border font-semibold hover:bg-button-hover!'
+                                                color="clear"
+                                                icon='send'
+                                                label="Test"
+                                            />
+                                        </PopoverTrigger>
                                         {showTestDropdown && (
-                                            <TestEmailDropdown automatedEmailId={automatedEmail.id} lexical={formState.lexical} subject={formState.subject} validateForm={validate} onClose={() => setShowTestDropdown(false)} />
+                                            <TestEmailDropdown automatedEmailId={automatedEmail.id} lexical={formState.lexical} subject={formState.subject} validateForm={validate} />
                                         )}
-                                    </div>
+                                    </Popover>
                                 </div>
                                 {hasDistinctReplyTo && (
                                     <div className='flex items-center'>
@@ -315,7 +298,7 @@ const WelcomeEmailModal = NiceModal.create<WelcomeEmailModalProps>(({emailType =
                         </EmailPreviewEmailHeader>
                     )}
                     <EmailPreviewBody className={cn(
-                        mode === 'preview' && 'shadow-sm bg-white dark:bg-grey-950',
+                        mode === 'preview' && 'bg-white shadow-sm dark:bg-grey-950',
                         mode === 'edit' && 'px-6',
                         mode === 'edit' && 'rounded-lg',
                         mode === 'edit' && errors.lexical && 'border border-red-500'
@@ -326,8 +309,11 @@ const WelcomeEmailModal = NiceModal.create<WelcomeEmailModalProps>(({emailType =
                                 mode === 'preview' && 'hidden'
                             )}
                             data-testid='welcome-email-editor'
-                            onFocus={() => {
-                                hasEditorBeenFocused.current = true;
+                            onKeyDown={() => {
+                                hasEditorBeenInteractedWith.current = true;
+                            }}
+                            onPointerDown={() => {
+                                hasEditorBeenInteractedWith.current = true;
                             }}
                         >
                             <MemberEmailEditor

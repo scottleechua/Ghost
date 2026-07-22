@@ -58,6 +58,8 @@ describe('Exporter', function () {
             'members_click_events',
             'members_created_events',
             'members_current_subscription',
+            'members_custom_field_values',
+            'members_custom_fields',
             'members_email_change_events',
             'members_feedback',
             'members_labels',
@@ -84,6 +86,7 @@ describe('Exporter', function () {
             'permissions',
             'permissions_roles',
             'permissions_users',
+            'post_gift_links',
             'post_revisions',
             'posts',
             'posts_authors',
@@ -145,7 +148,8 @@ describe('Exporter', function () {
             'members_subscribe_events',
             'outbox',
             'gifts',
-            'gift_links'
+            'gift_links',
+            'post_gift_links'
         ];
 
         excludedTables.forEach((tableName) => {

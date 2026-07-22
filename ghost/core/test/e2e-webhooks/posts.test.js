@@ -1,5 +1,5 @@
 const moment = require('moment-timezone');
-const {agentProvider, mockManager, fixtureManager, matchers} = require('../utils/e2e-framework');
+const {agentProvider, mockManager, fixtureManager, dbUtils, matchers} = require('../utils/e2e-framework');
 const {anyGhostAgent, anyArray, anyObjectId, anyISODateTime, anyUuid, anyContentVersion, anyContentLength, anyLocalURL, anyString} = matchers;
 
 const tierSnapshot = {
@@ -119,7 +119,8 @@ describe('post.* events', function () {
         await adminAPIAgent.loginAsOwner();
     });
 
-    beforeEach(function () {
+    beforeEach(async function () {
+        await dbUtils.truncate('webhooks');
         webhookMockReceiver = mockManager.mockWebhookRequests();
     });
 
@@ -141,7 +142,7 @@ describe('post.* events', function () {
                 posts: [{
                     title: 'webhookz',
                     status: 'draft',
-                    mobiledoc: fixtureManager.get('posts', 1).mobiledoc
+                    lexical: fixtureManager.get('posts', 1).lexical
                 }]
             })
             .expectStatus(201);
@@ -191,9 +192,9 @@ describe('post.* events', function () {
             .body({
                 posts: [
                     {
-                        title: 'webhookz',
+                        title: 'webhookz unpublished',
                         status: 'published',
-                        mobiledoc: fixtureManager.get('posts', 1).mobiledoc
+                        lexical: fixtureManager.get('posts', 1).lexical
                     }
                 ]
             })
@@ -430,7 +431,7 @@ describe('post.* events', function () {
                 posts: [{
                     title: 'test post tag attached webhook',
                     status: 'draft',
-                    mobiledoc: fixtureManager.get('posts', 1).mobiledoc
+                    lexical: fixtureManager.get('posts', 1).lexical
                 }]
             })
             .expectStatus(201);
@@ -483,7 +484,7 @@ describe('post.* events', function () {
                 posts: [{
                     title: 'test post tag detached webhook',
                     status: 'draft',
-                    mobiledoc: fixtureManager.get('posts', 1).mobiledoc
+                    lexical: fixtureManager.get('posts', 1).lexical
                 }]
             })
             .expectStatus(201);

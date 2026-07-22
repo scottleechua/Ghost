@@ -1,5 +1,6 @@
 const assert = require('node:assert/strict');
 const ObjectId = require('bson-objectid').default;
+const sinon = require('sinon');
 
 const automationsApi = require('../../../../../core/server/services/automations/automations-api');
 const {EMPTY_EMAIL_LEXICAL, NON_EMPTY_EMAIL_LEXICAL} = require('../../../../utils/automations-fixtures');
@@ -16,6 +17,10 @@ const buildSendEmailAction = (dataOverrides = {}) => ({
 });
 
 describe('automations API', function () {
+    afterEach(function () {
+        sinon.restore();
+    });
+
     describe('edit', function () {
         const automationId = ObjectId().toHexString();
 
@@ -38,6 +43,80 @@ describe('automations API', function () {
                     edges: []
                 }),
                 /body/
+            );
+        });
+
+        it('rejects a send email action with invalid JSON', async function () {
+            await assert.rejects(
+                automationsApi.edit(automationId, {
+                    status: 'inactive',
+                    actions: [buildSendEmailAction({email_lexical: '{"root":'})],
+                    edges: []
+                }),
+                /well-formed Lexical document/
+            );
+        });
+
+        it('rejects an active send email action with invalid JSON as malformed Lexical', async function () {
+            await assert.rejects(
+                automationsApi.edit(automationId, {
+                    status: 'active',
+                    actions: [buildSendEmailAction({email_lexical: '{"root":'})],
+                    edges: []
+                }),
+                /well-formed Lexical document/
+            );
+        });
+
+        it('rejects a send email action with JSON that is not a Lexical document', async function () {
+            await assert.rejects(
+                automationsApi.edit(automationId, {
+                    status: 'inactive',
+                    actions: [buildSendEmailAction({email_lexical: JSON.stringify({children: []})})],
+                    edges: []
+                }),
+                /well-formed Lexical document/
+            );
+        });
+
+        it('rejects a draft send email action with a malformed empty paragraph', async function () {
+            await assert.rejects(
+                automationsApi.edit(automationId, {
+                    status: 'inactive',
+                    actions: [buildSendEmailAction({
+                        email_lexical: JSON.stringify({
+                            root: {
+                                children: [{
+                                    type: 'paragraph',
+                                    version: 1
+                                }],
+                                type: 'root',
+                                version: 1
+                            }
+                        })
+                    })],
+                    edges: []
+                }),
+                /well-formed Lexical document/
+            );
+        });
+
+        it('rejects a send email action with malformed Lexical child nodes', async function () {
+            await assert.rejects(
+                automationsApi.edit(automationId, {
+                    status: 'inactive',
+                    actions: [buildSendEmailAction({
+                        email_lexical: JSON.stringify({
+                            root: {
+                                children: [{type: 'unknown-node', version: 1}],
+                                type: 'root',
+                                version: 1
+                            }
+                        })
+                    })],
+                    edges: []
+                }),
+                /well-formed Lexical document/
             );
         });
     });
