@@ -53,13 +53,14 @@ if [ ! -z "$FONT_FAMILY" ]; then
 ' "$GHOST_ROOT/apps/sodo-search/src/index.css"
 fi
 
-# Temporarily modify sodo-search's vite.config.js to only include English translations
-echo "Modifying sodo-search's vite.config.js to use English-only translations..."
-SODOSEARCH_VITE_CONFIG="$GHOST_ROOT/apps/sodo-search/vite.config.mjs"
-# Create a backup of the original config
-cp "$SODOSEARCH_VITE_CONFIG" "${SODOSEARCH_VITE_CONFIG}.backup"
-# Modify the config to only include English translations
-sed -i '' 's|dynamicRequireTargets: SUPPORTED_LOCALES.map(locale => `../../ghost/i18n/locales/${locale}/search.json`)|dynamicRequireTargets: ['\''../../ghost/i18n/locales/en/search.json'\'']|' "$SODOSEARCH_VITE_CONFIG"
+# Temporarily slim sodo-search's i18n bundle to English only.
+# As of sodo-search 1.8.3x, locales are loaded through a static ESM registry
+# (@tryghost/i18n/registry/search) that globs every locale via import.meta.glob,
+# instead of the old vite.config.mjs `dynamicRequireTargets` hack. Narrow that
+# glob to `en` so only English is bundled. Restored via git at cleanup.
+echo "Slimming sodo-search i18n registry to English-only translations..."
+SODOSEARCH_I18N_REGISTRY="$GHOST_ROOT/packages/i18n/lib/registry/search.mjs"
+sed -i '' "s|locales/\*/search.json|locales/en/search.json|" "$SODOSEARCH_I18N_REGISTRY"
 
 echo "Build started..."
 
@@ -97,11 +98,10 @@ fi
 
 echo "Cleaning up changes..."
 
-# Remove vite config backup file
-rm -f "${SODOSEARCH_VITE_CONFIG}.backup"
-
 # Restore all modified files to their original state using Git
 (cd "$GHOST_ROOT/apps/sodo-search" && git restore .)
+# The i18n registry lives outside apps/sodo-search, so restore it explicitly
+(cd "$GHOST_ROOT" && git restore packages/i18n/lib/registry/search.mjs)
 
 echo "Done!"
 echo ""

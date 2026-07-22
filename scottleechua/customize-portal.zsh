@@ -76,37 +76,37 @@ echo "Portal version: $PORTAL_VERSION"
 
 # Replace name placeholder in all files
 if [ ! -z "$PLACEHOLDER_NAME" ]; then
-    sed -i '' "s/Jamie Larson/$PLACEHOLDER_NAME/g" "$GHOST_ROOT/apps/portal/src/components/pages/account-profile-page.js"
-    sed -i '' "s/Jamie Larson/$PLACEHOLDER_NAME/g" "$GHOST_ROOT/apps/portal/src/components/pages/offer-page.js"
-    sed -i '' "s/Jamie Larson/$PLACEHOLDER_NAME/g" "$GHOST_ROOT/apps/portal/src/components/pages/signup-page.js"
+    sed -i '' "s/Jamie Larson/$PLACEHOLDER_NAME/g" "$GHOST_ROOT/apps/portal/src/components/pages/account-profile-page.jsx"
+    sed -i '' "s/Jamie Larson/$PLACEHOLDER_NAME/g" "$GHOST_ROOT/apps/portal/src/components/pages/offer-page.jsx"
+    sed -i '' "s/Jamie Larson/$PLACEHOLDER_NAME/g" "$GHOST_ROOT/apps/portal/src/components/pages/signup-page.jsx"
 fi
 
 # Replace email placeholder in all files
 if [ ! -z "$PLACEHOLDER_EMAIL" ]; then
-    sed -i '' "s/jamie@example.com/$PLACEHOLDER_EMAIL/g" "$GHOST_ROOT/apps/portal/src/components/pages/account-profile-page.js"
-    sed -i '' "s/jamie@example.com/$PLACEHOLDER_EMAIL/g" "$GHOST_ROOT/apps/portal/src/components/pages/offer-page.js"
-    sed -i '' "s/jamie@example.com/$PLACEHOLDER_EMAIL/g" "$GHOST_ROOT/apps/portal/src/components/pages/signup-page.js"
-    sed -i '' "s/jamie@example.com/$PLACEHOLDER_EMAIL/g" "$GHOST_ROOT/apps/portal/src/components/pages/signin-page.js"
+    sed -i '' "s/jamie@example.com/$PLACEHOLDER_EMAIL/g" "$GHOST_ROOT/apps/portal/src/components/pages/account-profile-page.jsx"
+    sed -i '' "s/jamie@example.com/$PLACEHOLDER_EMAIL/g" "$GHOST_ROOT/apps/portal/src/components/pages/offer-page.jsx"
+    sed -i '' "s/jamie@example.com/$PLACEHOLDER_EMAIL/g" "$GHOST_ROOT/apps/portal/src/components/pages/signup-page.jsx"
+    sed -i '' "s/jamie@example.com/$PLACEHOLDER_EMAIL/g" "$GHOST_ROOT/apps/portal/src/components/pages/signin-page.jsx"
 fi
 
 # Hide already a member message if flag is set
 if [ "$HIDE_ALREADY_MEMBER" = true ]; then
     # Insert return null as first statement in renderLoginMessage() so the element is never rendered
-    perl -i -pe 's/renderLoginMessage\(\) \{/renderLoginMessage() {\n        return null;/' "$GHOST_ROOT/apps/portal/src/components/pages/signup-page.js"
+    perl -i -pe 's/renderLoginMessage\(\) \{/renderLoginMessage() {\n        return null;/' "$GHOST_ROOT/apps/portal/src/components/pages/signup-page.jsx"
 fi
 
 # Hide site title if flag is set
 if [ "$HIDE_SITE_TITLE" = true ]; then
     echo "Removing site title on Signin and Signup pages..."
     
-    # Delete only the h1 element after renderSiteIcon() in signup-page.js
-    sed -i '' '/{this.renderSiteIcon()}/,/<\/h1>/ {/<\/h1>/d;}' "$GHOST_ROOT/apps/portal/src/components/pages/signup-page.js"
+    # Delete only the h1 element after renderSiteIcon() in signup-page.jsx
+    sed -i '' '/{this.renderSiteIcon()}/,/<\/h1>/ {/<\/h1>/d;}' "$GHOST_ROOT/apps/portal/src/components/pages/signup-page.jsx"
 
-    # Find renderSiteTitle() and replace the siteTitle return block with return null in signin-page.js
-    perl -i -0pe 's/(\n[ \t]+)return \(\n[ \t]+<h1 className='"'"'gh-portal-main-title'"'"'>\{siteTitle\}<\/h1>\n[ \t]+\);/$1return null;/g' "$GHOST_ROOT/apps/portal/src/components/pages/signin-page.js"
+    # Find renderSiteTitle() and replace the siteTitle return block with return null in signin-page.jsx
+    perl -i -0pe 's/(\n[ \t]+)return \(\n[ \t]+<h1 className='"'"'gh-portal-main-title'"'"'>\{siteTitle\}<\/h1>\n[ \t]+\);/$1return null;/g' "$GHOST_ROOT/apps/portal/src/components/pages/signin-page.jsx"
 
     # Delete padding and margin from signup header
-    sed -i '' '/padding: 0 32px;/,/margin-bottom: 32px;/d' "$GHOST_ROOT/apps/portal/src/components/pages/signup-page.js"
+    sed -i '' '/padding: 0 32px;/,/margin-bottom: 32px;/d' "$GHOST_ROOT/apps/portal/src/components/pages/signup-page.jsx"
 
     # Modify margin in frame.styles.js
     sed -i '' '/\.gh-portal-newsletter-selection {/,+2 s/margin:.*;/margin: 12px auto;/' "$GHOST_ROOT/apps/portal/src/components/frame.styles.js"
@@ -115,7 +115,7 @@ fi
 # Hide Powered by Ghost badge if flag is set
 if [ "$HIDE_POWERED_BY_GHOST" = true ]; then
     echo "Removing Powered by Ghost box"
-    perl -i -pe "s/\+ \(hasMode\(\['preview'\]\) \? 'hidden ' : ''\) \+ pageClass/+ 'hidden ' + pageClass/g" "$GHOST_ROOT/apps/portal/src/components/popup-modal.js"
+    perl -i -pe "s/\+ \(hasMode\(\['preview'\]\) \? 'hidden ' : ''\) \+ pageClass/+ 'hidden ' + pageClass/g" "$GHOST_ROOT/apps/portal/src/components/popup-modal.jsx"
 fi
 
 # Replace icon with logo if flag is set
@@ -153,13 +153,14 @@ if [ "$ENABLE_DARK_MODE" = true ]; then
     fi
 fi
 
-# Temporarily modify portal's vite.config.js to only include English translations
-echo "Modifying portal's vite.config.mjs to use English-only translations..."
-PORTAL_VITE_CONFIG="$GHOST_ROOT/apps/portal/vite.config.mjs"
-# Create a backup of the original config
-cp "$PORTAL_VITE_CONFIG" "${PORTAL_VITE_CONFIG}.backup"
-# Modify the config to only include English translations
-sed -i '' "s|dynamicRequireTargets: \['../../ghost/i18n/locales/\*/portal.json'\]|dynamicRequireTargets: ['../../ghost/i18n/locales/en/portal.json']|" "$PORTAL_VITE_CONFIG"
+# Temporarily slim Portal's i18n bundle to English only.
+# As of Portal 2.69.x, locales are loaded through a static ESM registry
+# (@tryghost/i18n/registry/portal) that globs every locale via import.meta.glob,
+# instead of the old vite.config.mjs `dynamicRequireTargets` hack. Narrow that
+# glob to `en` so only English is bundled. Restored via git at cleanup.
+echo "Slimming Portal i18n registry to English-only translations..."
+PORTAL_I18N_REGISTRY="$GHOST_ROOT/packages/i18n/lib/registry/portal.mjs"
+sed -i '' "s|locales/\*/portal.json|locales/en/portal.json|" "$PORTAL_I18N_REGISTRY"
 
 echo "Build started..."
 
@@ -183,11 +184,10 @@ fi
 
 echo "Cleaning up changes..."
 
-# Remove vite config backup file
-rm -f "${PORTAL_VITE_CONFIG}.backup"
-
 # Restore all modified files to their original state using Git
 (cd "$GHOST_ROOT/apps/portal" && git restore .)
+# The i18n registry lives outside apps/portal, so restore it explicitly
+(cd "$GHOST_ROOT" && git restore packages/i18n/lib/registry/portal.mjs)
 
 echo "Done!"
 echo ""

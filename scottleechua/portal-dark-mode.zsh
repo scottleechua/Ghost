@@ -59,15 +59,15 @@ cat > "$DARK_STYLES_FILE" << 'EOL'
 EOL
 
 # Edit popup-modal.js to add dark mode detection
-sed -i '' -e "/const isMobile = window.innerWidth < 480;/r $TOGGLE_DARK_FILE" "$GHOST_ROOT/apps/portal/src/components/popup-modal.js"
-sed -i '' -e "s/dataDir={this.context.dir}/dataDir={this.context.dir}\n                    dataDark={isParentDark}/" "$GHOST_ROOT/apps/portal/src/components/popup-modal.js"
+sed -i '' -e "/const isMobile = window.innerWidth < 480;/r $TOGGLE_DARK_FILE" "$GHOST_ROOT/apps/portal/src/components/popup-modal.jsx"
+sed -i '' -e "s/dataDir={this.context.dir}/dataDir={this.context.dir}\n                    dataDark={isParentDark}/" "$GHOST_ROOT/apps/portal/src/components/popup-modal.jsx"
 
 # Edit notification.js to add dark mode detection
-sed -i '' -e "/const {type, status, autoHide, duration} = this.state;/r $TOGGLE_DARK_FILE" "$GHOST_ROOT/apps/portal/src/components/notification.js"
-sed -i '' -e "s/testid=\"portal-notification-frame\"/testid=\"portal-notification-frame\"\n                    dataDark={isParentDark}/" "$GHOST_ROOT/apps/portal/src/components/notification.js"
+sed -i '' -e "/const {type, status, message, autoHide, duration, notificationCount} = this.state;/r $TOGGLE_DARK_FILE" "$GHOST_ROOT/apps/portal/src/components/notification.jsx"
+sed -i '' -e "s/testid=\"portal-notification-frame\"/testid=\"portal-notification-frame\"\n                    dataDark={isParentDark}/" "$GHOST_ROOT/apps/portal/src/components/notification.jsx"
 
 # Edit frame.js to add dark/light class
-sed -i '' -e "s/this.forceUpdate();/this.iframeHtml.classList.add(this.props.dataDark ? 'dark' : 'light');\n            this.forceUpdate();/" "$GHOST_ROOT/apps/portal/src/components/frame.js"
+sed -i '' -e "s/this.forceUpdate();/this.iframeHtml.classList.add(this.props.dataDark ? 'dark' : 'light');\n            this.forceUpdate();/" "$GHOST_ROOT/apps/portal/src/components/frame.jsx"
 
 # Edit global.styles.js to add dark mode styles
 GLOBAL_STYLES_PATH="$GHOST_ROOT/apps/portal/src/components/global.styles.js"

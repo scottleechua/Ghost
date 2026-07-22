@@ -18,17 +18,17 @@ fi
 echo "Replacing icon with logo..."
 
 # Replace SiteIcon with SiteLogo in signup-page.js
-sed -i '' 's/SiteIcon/SiteLogo/g' "$GHOST_ROOT/apps/portal/src/components/pages/signup-page.js"
-sed -i '' 's/siteIcon/siteLogo/g' "$GHOST_ROOT/apps/portal/src/components/pages/signup-page.js"
-sed -i '' 's/site.icon/site.logo/g' "$GHOST_ROOT/apps/portal/src/components/pages/signup-page.js"
+sed -i '' 's/SiteIcon/SiteLogo/g' "$GHOST_ROOT/apps/portal/src/components/pages/signup-page.jsx"
+sed -i '' 's/siteIcon/siteLogo/g' "$GHOST_ROOT/apps/portal/src/components/pages/signup-page.jsx"
+sed -i '' 's/site.icon/site.logo/g' "$GHOST_ROOT/apps/portal/src/components/pages/signup-page.jsx"
 
 # Replace SiteIcon with SiteLogo in signin-page.js
-sed -i '' 's/SiteIcon/SiteLogo/g' "$GHOST_ROOT/apps/portal/src/components/pages/signin-page.js"
-sed -i '' 's/siteIcon/siteLogo/g' "$GHOST_ROOT/apps/portal/src/components/pages/signin-page.js"
-sed -i '' 's/site.icon/site.logo/g' "$GHOST_ROOT/apps/portal/src/components/pages/signin-page.js"
+sed -i '' 's/SiteIcon/SiteLogo/g' "$GHOST_ROOT/apps/portal/src/components/pages/signin-page.jsx"
+sed -i '' 's/siteIcon/siteLogo/g' "$GHOST_ROOT/apps/portal/src/components/pages/signin-page.jsx"
+sed -i '' 's/site.icon/site.logo/g' "$GHOST_ROOT/apps/portal/src/components/pages/signin-page.jsx"
 
 # Delete width = 60px
-sed -i '' '/width: 60px;/d' "$GHOST_ROOT/apps/portal/src/components/pages/signup-page.js"
+sed -i '' '/width: 60px;/d' "$GHOST_ROOT/apps/portal/src/components/pages/signup-page.jsx"
 
 # Create a temporary file with the new media query block
 TEMP_FILE=$(mktemp)
@@ -72,7 +72,7 @@ awk '
         next
     }
     !in_block { print }
-' "$GHOST_ROOT/apps/portal/src/components/pages/signup-page.js" > "$GHOST_ROOT/apps/portal/src/components/pages/signup-page.js.tmp" && mv "$GHOST_ROOT/apps/portal/src/components/pages/signup-page.js.tmp" "$GHOST_ROOT/apps/portal/src/components/pages/signup-page.js"
+' "$GHOST_ROOT/apps/portal/src/components/pages/signup-page.jsx" > "$GHOST_ROOT/apps/portal/src/components/pages/signup-page.jsx.tmp" && mv "$GHOST_ROOT/apps/portal/src/components/pages/signup-page.jsx.tmp" "$GHOST_ROOT/apps/portal/src/components/pages/signup-page.jsx"
 
 # Clean up temporary file
 rm "$TEMP_FILE"

@@ -58,38 +58,40 @@ sed -i '' -e "/:root {/r $LIGHT_ACCENTS_FILE" "$GHOST_ROOT/apps/portal/src/compo
 sed -i '' -e "/html.dark {/r $DARK_ACCENTS_FILE" "$GHOST_ROOT/apps/portal/src/components/global.styles.js"
 
 # Delete style={{color: brandColor}} line in signup-page.js if it appears within 10 lines after the button with className='gh-portal-btn gh-portal-btn-link'
-if grep -A 10 "className='gh-portal-btn gh-portal-btn-link'" "$GHOST_ROOT/apps/portal/src/components/pages/signup-page.js" | grep -q "style={{color: brandColor}}"; then
+if grep -A 10 "className='gh-portal-btn gh-portal-btn-link'" "$GHOST_ROOT/apps/portal/src/components/pages/signup-page.jsx" | grep -q "style={{color: brandColor}}"; then
     sed -i '' -e "/className='gh-portal-btn gh-portal-btn-link'/,+10 {
         /style={{color: brandColor}}/d
-    }" "$GHOST_ROOT/apps/portal/src/components/pages/signup-page.js"
+    }" "$GHOST_ROOT/apps/portal/src/components/pages/signup-page.jsx"
 fi
 
 # Delete style={{color: brandColor}} line in signin-page.js if it appears within 10 lines after the button with className='gh-portal-btn gh-portal-btn-link'
-if grep -A 10 "className='gh-portal-btn gh-portal-btn-link'" "$GHOST_ROOT/apps/portal/src/components/pages/signin-page.js" | grep -q "style={{color: brandColor}}"; then
+if grep -A 10 "className='gh-portal-btn gh-portal-btn-link'" "$GHOST_ROOT/apps/portal/src/components/pages/signin-page.jsx" | grep -q "style={{color: brandColor}}"; then
     sed -i '' -e "/className='gh-portal-btn gh-portal-btn-link'/,+10 {
         /style={{color: brandColor}}/d
-    }" "$GHOST_ROOT/apps/portal/src/components/pages/signin-page.js"
+    }" "$GHOST_ROOT/apps/portal/src/components/pages/signin-page.jsx"
 fi
 
 # Add link style to .gh-portal-signup-terms-content p in signup-page.js
-sed -i '' -e "/\.gh-portal-signup-terms-content p {/r $LINK_STYLE_FILE" "$GHOST_ROOT/apps/portal/src/components/pages/signup-page.js"
+sed -i '' -e "/\.gh-portal-signup-terms-content p {/r $LINK_STYLE_FILE" "$GHOST_ROOT/apps/portal/src/components/pages/signup-page.jsx"
 
 # Replace backgroundColor line in action-button.js
-if grep -A 10 "const Styles = ({brandColor, disabled, style = {}, isPrimary}) => {" "$GHOST_ROOT/apps/portal/src/components/common/action-button.js" | grep -q "let backgroundColor ="; then
+if grep -A 10 "const Styles = ({brandColor, disabled, style = {}, isPrimary}) => {" "$GHOST_ROOT/apps/portal/src/components/common/action-button.jsx" | grep -q "let backgroundColor ="; then
     sed -i '' -e "/const Styles = ({brandColor, disabled, style = {}, isPrimary}) => {/,+10 {
         /let backgroundColor =/s/let backgroundColor = .*/let backgroundColor = 'var(--portal-primary-accent)';/
-    }" "$GHOST_ROOT/apps/portal/src/components/common/action-button.js"
+    }" "$GHOST_ROOT/apps/portal/src/components/common/action-button.jsx"
 fi
 
-# Replace textColor line in action-button.js
-if grep -A 10 "const Styles = ({brandColor, disabled, style = {}, isPrimary}) => {" "$GHOST_ROOT/apps/portal/src/components/common/action-button.js" | grep -q "const textColor ="; then
-    sed -i '' -e "/const Styles = ({brandColor, disabled, style = {}, isPrimary}) => {/,+10 {
-        /const textColor =/s/const textColor = .*/const textColor = 'var(--portal-secondary-accent)';/
-    }" "$GHOST_ROOT/apps/portal/src/components/common/action-button.js"
+# Set the primary-button text color to the secondary accent.
+# Portal 2.69.x removed the `textColor` variable from action-button; the button
+# style object now spreads {backgroundColor} for primary buttons and derives the
+# text color from CSS. Inject `color` into that same isPrimary spread so primary
+# buttons pick up the secondary accent (matching the pre-2.69 behavior).
+if grep -qF "...(isPrimary ? {backgroundColor} : {})," "$GHOST_ROOT/apps/portal/src/components/common/action-button.jsx"; then
+    sed -i '' -e "s/\.\.\.(isPrimary ? {backgroundColor} : {}),/...(isPrimary ? {backgroundColor, color: 'var(--portal-secondary-accent)'} : {}),/" "$GHOST_ROOT/apps/portal/src/components/common/action-button.jsx"
 fi
 
 # Modify background in switch.js
-sed -i '' '/\.gh-portal-for-switch input:checked \+ .input-toggle-component {/,+1 s/background:.*;/background: var(--portal-primary-accent);/' "$GHOST_ROOT/apps/portal/src/components/common/switch.js"
+sed -i '' '/\.gh-portal-for-switch input:checked \+ .input-toggle-component {/,+1 s/background:.*;/background: var(--portal-primary-accent);/' "$GHOST_ROOT/apps/portal/src/components/common/switch.jsx"
 
 # Clean up temporary files
 rm "$LIGHT_ACCENTS_FILE"
