@@ -10,10 +10,10 @@
  *                 rendering layer. Paths are anchored on `^ghost/core/core/`.
  *
  *   apps/       — design system layer hierarchy and public/admin separation.
- *                 shade/ and admin-x-design-system/ are leaf packages that
- *                 nothing above them may pull back into. admin-x-framework/
- *                 sits above them but below feature apps. Public UMD bundles
- *                 (portal, comments-ui, etc.) must not depend on admin libs.
+ *                 shade/ is a leaf package that nothing above it may pull
+ *                 back into. admin-x-framework/ sits above it but below
+ *                 feature apps. Public UMD bundles (portal, comments-ui,
+ *                 etc.) must not depend on admin libs.
  *
  *                 Workspace packages appear as unresolved `@tryghost/*` module
  *                 specifiers in the graph (pnpm workspace symlinks are stopped
@@ -97,54 +97,30 @@ module.exports = {
         // ============================================================
         {
             name: 'shade-is-leaf',
-            comment: 'shade/ must not depend on admin-x-framework or admin-x-design-system. It is the foundation layer.',
+            comment: 'shade/ must not depend on admin-x-framework. It is the foundation layer.',
             severity: 'error',
             from: {path: '^apps/shade/'},
-            to: {path: '^@tryghost/(admin-x-framework|admin-x-design-system)'}
-        },
-        // ============================================================
-        // apps/ — admin-x-design-system/ is a leaf; must not depend on higher layers
-        // ============================================================
-        {
-            name: 'admin-x-design-system-is-leaf',
-            comment: 'admin-x-design-system/ must not depend on shade or admin-x-framework.',
-            severity: 'error',
-            from: {path: '^apps/admin-x-design-system/'},
-            to: {path: '^@tryghost/(shade|admin-x-framework)'}
+            to: {path: '^@tryghost/admin-x-framework'}
         },
         // ============================================================
         // apps/ — admin-x-framework/ must not depend on feature apps
         // ============================================================
         {
             name: 'framework-not-feature-apps',
-            comment: 'admin-x-framework/ must not depend on feature apps (activitypub, posts, admin-x-settings). The framework layer sits below the feature layer.',
+            comment: 'admin-x-framework/ must not depend on feature apps (activitypub). The framework layer sits below the feature layer.',
             severity: 'error',
             from: {path: '^apps/admin-x-framework/'},
-            to: {path: '^@tryghost/(activitypub|posts|admin-x-settings)'}
-        },
-        // ============================================================
-        // apps/ — new admin apps must not use the legacy design system
-        // ============================================================
-        {
-            name: 'new-admin-apps-not-admin-x-design-system',
-            comment: 'New admin apps must use shade, not admin-x-design-system.',
-            severity: 'error',
-            from: {
-                // Adding apps to this list is the goal as each migrates off admin-x-design-system
-                // Goal: Work up until admin-x-settings joins and admin-x-design-system can be removed
-                path: '^apps/(activitypub|posts)/'
-            },
-            to: {path: '^@tryghost/admin-x-design-system'}
+            to: {path: '^@tryghost/activitypub'}
         },
         // ============================================================
         // apps/ — public UMD apps must not depend on admin-only libraries
         // ============================================================
         {
             name: 'public-apps-not-admin-libs',
-            comment: 'Public UMD apps (portal, comments-ui, etc.) must not depend on admin-only libraries (shade, admin-x-framework, admin-x-design-system).',
+            comment: 'Public UMD apps (portal, comments-ui, etc.) must not depend on admin-only libraries (shade, admin-x-framework).',
             severity: 'error',
             from: {path: '^apps/(portal|comments-ui|signup-form|sodo-search|announcement-bar|admin-toolbar)/'},
-            to: {path: '^@tryghost/(shade|admin-x-framework|admin-x-design-system)'}
+            to: {path: '^@tryghost/(shade|admin-x-framework)'}
         }
     ],
     options: {
@@ -152,4 +128,3 @@ module.exports = {
         exclude: {path: '(^|/)(node_modules|coverage|coverage-next|test|built|dist)/'}
     }
 };
-

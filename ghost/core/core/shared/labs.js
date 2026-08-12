@@ -27,14 +27,8 @@ const messages = {
 
 // flags in this list always return `true`, allows quick global enable prior to full flag removal
 const GA_FEATURES = [
-    'customFonts',
-    'explore',
-    'commentsThreads',
-    'commentsPinning',
-    'featurebaseFeedback',
-    'dangerZoneResetAuth',
-    'indexnow',
-    'llmsTxt'
+    'automationAnalytics',
+    'customFonts'
 ];
 
 // These features are considered publicly available and can be enabled/disabled by users
@@ -48,11 +42,10 @@ const PUBLIC_BETA_FEATURES = [
 // Which is only visible if the developer experiments flag is enabled
 const PRIVATE_FEATURES = [
     'automations',
-    'automationAnalytics',
+    'automationRunAnalytics',
     'stripeAutomaticTax',
     'importMemberTier',
     'csvContentImporter',
-    'urlCache',
     'lexicalIndicators',
     'adminUIRefresh',
     'emailCustomization',
@@ -64,7 +57,9 @@ const PRIVATE_FEATURES = [
     'getHelperDeduplication',
     'memberDetailsReact',
     'membersCustomFields',
-    'previewByTier'
+    'paywallImprovements',
+    'giftSubCustomization',
+    'tagDetailsReact'
 ];
 
 module.exports.GA_KEYS = [...GA_FEATURES];

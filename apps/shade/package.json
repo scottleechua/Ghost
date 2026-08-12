@@ -38,11 +38,6 @@
             "import": "./es/page-templates.js",
             "default": "./es/page-templates.js"
         },
-        "./posts-stats": {
-            "types": "./types/posts-stats.d.ts",
-            "import": "./es/posts-stats.js",
-            "default": "./es/posts-stats.js"
-        },
         "./app": {
             "types": "./types/app.d.ts",
             "import": "./es/app.js",
@@ -89,6 +84,7 @@
         "@tailwindcss/postcss": "catalog:",
         "@testing-library/react": "catalog:",
         "@types/node": "catalog:",
+        "@typescript/native": "catalog:",
         "@vitejs/plugin-react": "catalog:",
         "@vitest/coverage-v8": "catalog:",
         "eslint": "catalog:",
@@ -101,15 +97,19 @@
         "tsc-alias": "1.8.17",
         "tsx": "catalog:",
         "tw-animate-css": "catalog:",
-        "@typescript/native": "catalog:",
         "typescript": "catalog:",
         "vite": "catalog:",
         "vite-plugin-svgr": "catalog:",
         "vitest": "catalog:"
     },
     "dependencies": {
+        "@codemirror/state": "catalog:",
+        "@dnd-kit/core": "catalog:",
+        "@dnd-kit/sortable": "catalog:",
+        "@dnd-kit/utilities": "catalog:",
+        "@ebay/nice-modal-react": "catalog:",
         "@hookform/resolvers": "5.4.0",
-        "@number-flow/react": "0.6.1",
+        "@number-flow/react": "0.6.2",
         "@radix-ui/react-accordion": "1.2.15",
         "@radix-ui/react-alert-dialog": "1.1.18",
         "@radix-ui/react-avatar": "catalog:",
@@ -133,6 +133,7 @@
         "@types/react": "catalog:",
         "@types/react-dom": "catalog:",
         "@types/validator": "catalog:",
+        "@uiw/react-codemirror": "catalog:",
         "class-variance-authority": "0.7.1",
         "clsx": "catalog:",
         "cmdk": "1.1.1",

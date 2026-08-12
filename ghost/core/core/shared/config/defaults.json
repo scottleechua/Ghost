@@ -74,6 +74,9 @@
         "customFields": {
             "maxDefinitions": 100
         },
+        "importer": {
+            "inlineThreshold": 500
+        },
         "emailTemplate": {
             "showSiteHeader": true,
             "showPoweredBy": true
@@ -303,7 +306,7 @@
     },
     "comments": {
         "url": "https://cdn.jsdelivr.net/ghost/comments-ui@~{version}/umd/comments-ui.min.js",
-        "version": "1.5"
+        "version": "1.6"
     },
     "adminToolbar": {
         "url": "https://cdn.jsdelivr.net/ghost/admin-toolbar@~{version}/umd/admin-toolbar.min.js",
@@ -363,5 +366,6 @@
         "captureLinkClickBadMemberUuid": false
     },
     "disableJSBackups": false,
-    "disableMigrationBackups": false
+    "disableMigrationBackups": false,
+    "usingLoopbackReverseProxy": false
 }

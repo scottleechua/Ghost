@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { userEvent } from "vitest/browser";
+import { page, userEvent } from "vitest/browser";
 
-import { fakeEditSettings, fakeSettingsScreens, renderAdminApp, settingsResponse, type RenderAdminAppOptions } from "@test-utils/acceptance";
+import { currentRoute, fakeEditSettings, fakeSettingsScreens, renderAdminApp, settingsResponse, type RenderAdminAppOptions } from "@test-utils/acceptance";
 import { settingsScreen } from "@/settings/settings.screen";
 
 function withStripe(): RenderAdminAppOptions {
@@ -23,6 +23,22 @@ function withStripe(): RenderAdminAppOptions {
 }
 
 describe("Tips and donations settings", () => {
+    it("closes the currency dropdown with Escape without closing Settings", async () => {
+        fakeSettingsScreens();
+        await renderAdminApp("/settings", withStripe());
+
+        const currency = settingsScreen.tipsAndDonations().getByRole("combobox", {name: "Currency"});
+        await currency.click();
+        const search = page.getByPlaceholder("Search currencies...");
+        await expect.element(search).toBeVisible();
+
+        await userEvent.keyboard("{Escape}");
+
+        await expect(search).toHaveCount(0);
+        await expect.element(currency).toBeVisible();
+        await expect.poll(currentRoute).toBe("/settings");
+    });
+
     it("is hidden when Stripe is disabled", async () => {
         fakeSettingsScreens();
         await renderAdminApp("/settings");
@@ -40,9 +56,6 @@ describe("Tips and donations settings", () => {
         await expect.element(settingsScreen.suggestedAmount()).toHaveValue("5");
         await expect.element(section.getByRole("combobox")).toBeVisible();
         await expect.element(settingsScreen.donateUrl()).toHaveTextContent("http://test.com/#/portal/support");
-        await expect.element(settingsScreen.previewShareableLink()).not.toBeVisible();
-        await expect.element(settingsScreen.copyShareableLink()).not.toBeVisible();
-
         await userEvent.hover(settingsScreen.donateUrl().element());
 
         await expect.element(settingsScreen.previewShareableLink()).toBeVisible();
@@ -74,5 +87,8 @@ describe("Tips and donations settings", () => {
 
         await expect.element(section).toHaveTextContent("Suggested amount cannot be more than $10000.");
         expect(settingsApi.requests).toHaveLength(0);
+
+        await section.getByRole("button", { name: "Cancel" }).click();
+        await expect.element(amount).toHaveValue("5");
     });
 });

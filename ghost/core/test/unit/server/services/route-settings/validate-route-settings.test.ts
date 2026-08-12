@@ -83,10 +83,12 @@ describe('UNIT: services/route-settings/validation (via parseRouteSettings)', fu
             }));
         });
 
-        it('throws on route path with :slug notation', function () {
-            throwsValidation(() => parse({
+        it('accepts route path with :slug notation', function () {
+            const settings = parse({
                 routes: {'/foo/:slug/': 'post'}
-            }));
+            });
+
+            assert.equal(settings.routes[0].path, '/foo/:slug/');
         });
     });
 
@@ -115,10 +117,18 @@ describe('UNIT: services/route-settings/validation (via parseRouteSettings)', fu
             }), 'Please define a permalink route');
         });
 
-        it('throws on collection path with :slug notation', function () {
-            throwsValidation(() => parse({
+        it('accepts collection path with :slug notation', function () {
+            const settings = parse({
                 collections: {'/blog/:slug/': {permalink: '/{slug}/'}}
-            }));
+            });
+
+            assert.equal(settings.collections[0].path, '/blog/:slug/');
+        });
+
+        it('throws on permalink using :slug notation even when the path does', function () {
+            throwsValidation(() => parse({
+                collections: {'/blog/:slug/': {permalink: '/:slug/'}}
+            }), 'uses the :param notation');
         });
 
         it('throws on permalink without leading slash', function () {
@@ -194,6 +204,22 @@ describe('UNIT: services/route-settings/validation (via parseRouteSettings)', fu
         it('accepts valid shortform data', function () {
             assert.doesNotThrow(() => parse({
                 routes: {'/food/': {template: 'food', data: 'tag.food'}}
+            }));
+        });
+
+        it('accepts %s as the shortform slug', function () {
+            const settings = parse({
+                routes: {'/food/': {template: 'food', data: 'tag.%s'}}
+            });
+
+            assert.equal(settings.routes[0].data, 'tag.%s');
+        });
+
+        it('throws on shortform data with %s embedded in the slug', function () {
+            // %s is only meaningful as the whole slug — fetch-data swaps it for the
+            // request's slug param, and nothing in the fleet uses a partial form.
+            throwsValidation(() => parse({
+                routes: {'/food/': {template: 'food', data: 'tag.recipes-%s'}}
             }));
         });
 
@@ -482,7 +508,6 @@ describe('UNIT: services/route-settings/validation (via parseRouteSettings)', fu
             const cases: [string, unknown, string][] = [
                 ['route missing a leading slash', {routes: {'about/': 'about'}}, 'The following definition "routes[\'about/\']" is invalid: "about/" is missing a leading slash. Please use e.g. /about/.'],
                 ['route missing a trailing slash', {routes: {'/about': 'about'}}, 'The following definition "routes[\'/about\']" is invalid: "/about" is missing a trailing slash. Please use e.g. /about/.'],
-                ['route using :param', {routes: {'/foo/:slug/': 'post'}}, 'The following definition "routes[\'/foo/:slug/\']" is invalid: "/foo/:slug/" uses the :param notation. Please use "/foo/{slug}/".'],
                 ['collection missing a leading slash', {collections: {'blog/': {permalink: '/{slug}/'}}}, 'The following definition "collections[\'blog/\']" is invalid: "blog/" is missing a leading slash. Please use e.g. /blog/.'],
                 ['collection missing a trailing slash', {collections: {'/blog': {permalink: '/{slug}/'}}}, 'The following definition "collections[\'/blog\']" is invalid: "/blog" is missing a trailing slash. Please use e.g. /blog/.'],
                 ['permalink missing a leading slash', {collections: {'/blog/': {permalink: '{slug}/'}}}, 'The following definition "collections[\'/blog/\'].permalink" is invalid: "{slug}/" is missing a leading slash. Please use e.g. /{slug}/.'],
@@ -503,6 +528,51 @@ describe('UNIT: services/route-settings/validation (via parseRouteSettings)', fu
             assert.equal(helpFor({routes: {'/x/': {controller: 'channel', filter: 42}}}), 'https://ghost.org/docs/themes/routing/');
             assert.equal(helpFor({routes: {'/x/': {template: 'x', data: 'nonsense'}}}), 'e.g. data: tag.recipes');
             assert.match(helpFor({routes: {'/x/': {template: 'x', data: {e: {resource: 'posts'}}}}}) ?? '', /^e\.g\.\n data:/);
+        });
+    });
+
+    describe('domain error codes', function () {
+        function codeFor(raw: unknown): string | undefined {
+            try {
+                parse(raw);
+            } catch (err) {
+                assert.ok(err instanceof errors.ValidationError, `expected a ValidationError, got ${err}`);
+                return (err as {code?: string}).code;
+            }
+            return assert.fail('expected parsing to throw');
+        }
+
+        // Each invalid file should carry a stable, machine-readable code so
+        // callers can react to the failure class without matching on message
+        // text (which is authored for humans and free to change).
+        const cases: Array<[string, unknown, string]> = [
+            ['route path missing a slash', {routes: {'about/': 'about'}}, 'INVALID_PATH'],
+            ['collection path missing a slash', {collections: {'blog/': {permalink: '/{slug}/'}}}, 'INVALID_PATH'],
+            ['collection permalink using :param', {collections: {'/blog/': {permalink: '/:slug/'}}}, 'INVALID_PERMALINK'],
+            ['collection missing a permalink', {collections: {'/blog/': {template: 'index'}}}, 'INVALID_PERMALINK'],
+            ['route with no template, data or content_type', {routes: {'/about/': {}}}, 'INVALID_TEMPLATE'],
+            ['unknown taxonomy key', {taxonomies: {category: '/category/{slug}/'}}, 'INVALID_TAXONOMY'],
+            ['missing taxonomy permalink', {taxonomies: {tag: ''}}, 'INVALID_PERMALINK'],
+            ['taxonomy permalink using :param', {taxonomies: {tag: '/tag/:slug/'}}, 'INVALID_PERMALINK'],
+            // The schema rejects these one step before the hand-written checks
+            // above, so they only carry the permalink code if the code is also
+            // inferred from the failing key. `permalink:`/`tag:` left empty in
+            // YAML parses to null, which is the common way to write it.
+            ['collection permalink left empty', {collections: {'/blog/': {permalink: null}}}, 'INVALID_PERMALINK'],
+            ['collection permalink of the wrong type', {collections: {'/blog/': {permalink: 42}}}, 'INVALID_PERMALINK'],
+            ['taxonomy permalink left empty', {taxonomies: {tag: null}}, 'INVALID_PERMALINK'],
+            ['taxonomy permalink of the wrong type', {taxonomies: {tag: 42}}, 'INVALID_PERMALINK'],
+            ['unsupported longform data resource', {routes: {'/x/': {template: 'x', data: {thing: {type: 'read', resource: 'widgets', slug: 'a'}}}}}, 'INVALID_RESOURCE'],
+            ['unsupported shorthand data resource', {routes: {'/x/': {template: 'x', data: 'widget.foo'}}}, 'INVALID_RESOURCE'],
+            ['reserved data key', {routes: {'/x/': {template: 'x', data: {slug: 'tag.recipes'}}}}, 'INVALID_DATA'],
+            ['data provided as a list', {routes: {'/x/': {template: 'x', data: ['a', 'b']}}}, 'INVALID_DATA'],
+            ['top-level section not a map', {routes: 'hello'}, 'INVALID_ROUTE_SETTINGS']
+        ];
+
+        cases.forEach(([name, raw, expected]) => {
+            it(`${name} → ${expected}`, function () {
+                assert.equal(codeFor(raw), expected);
+            });
         });
     });
 });

@@ -11,10 +11,15 @@ const logging = require('@tryghost/logging');
 // The only server events the frontend may subscribe to. A narrow surface on
 // purpose: the shared bus's own header discourages widening cross-layer
 // coupling, so new event names here need the same scrutiny as new exports.
-const FRONTEND_SUBSCRIBABLE_EVENTS = ['site.changed', 'url.added', 'url.removed'];
+const FRONTEND_SUBSCRIBABLE_EVENTS = ['site.changed'];
 
 // Require from the handlebars framework
 const {SafeString} = require('./handlebars');
+
+// sanitize-html over DOMPurify here: DOMPurify needs a DOM, and jsdom costs
+// ~116MB RSS to load. This module is on the boot path, so that was paid by
+// every process — including ones that never render a caption.
+const sanitizeHtml = require('sanitize-html');
 
 module.exports = {
     getFrontendKey: async () => {
@@ -44,7 +49,11 @@ module.exports = {
         (Array.isArray(data) ? data : [data]).forEach((resource) => {
             // feature_image_caption contains HTML, making it a SafeString spares theme devs from triple-curlies
             if (resource.feature_image_caption) {
-                resource.feature_image_caption = new SafeString(resource.feature_image_caption);
+                const sanitizedCaption = sanitizeHtml(resource.feature_image_caption, {
+                    allowedTags: ['a', 'b', 'i', 'span'],
+                    allowedAttributes: {'*': ['href', 'style']}
+                });
+                resource.feature_image_caption = new SafeString(sanitizedCaption);
             }
 
             // some properties are extracted to local template data to force one way of using it
@@ -101,5 +110,5 @@ module.exports = {
     labs: require('../../shared/labs'),
     // URGH... Yuk (unhelpful comment :D)
     urlService: require('../../server/services/url'),
-    urlUtils: require('../../shared/url-utils')
+    urlUtils: require('../../shared/url-utils').default
 };

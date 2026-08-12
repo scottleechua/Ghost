@@ -11,7 +11,7 @@ const signupPaidEmail = require('./emails/signup-paid');
 const subscribeEmail = require('./emails/subscribe');
 const updateEmail = require('./emails/update-email');
 const SingleUseTokenProvider = require('./single-use-token-provider');
-const urlUtils = require('../../../shared/url-utils');
+const urlUtils = require('../../../shared/url-utils').default;
 const urlService = require('../url');
 const labsService = require('../../../shared/labs');
 const offersService = require('../offers');
@@ -54,7 +54,7 @@ function trimLeadingWhitespace(strings, ...values) {
 
 function createApiInstance(config) {
     const membersApiInstance = MembersApi({
-        urlService: urlService.facade,
+        urlService,
         tokenConfig: config.getTokenConfig(),
         auth: {
             getSigninURL: config.getSigninURL.bind(config),
@@ -244,8 +244,7 @@ function createApiInstance(config) {
             EmailSpamComplaintEvent: models.EmailSpamComplaintEvent,
             Automation: models.Automation,
             WelcomeEmailAutomationRun: models.WelcomeEmailAutomationRun,
-            AutomatedEmailRecipient: models.AutomatedEmailRecipient,
-            Gift: models.Gift
+            AutomatedEmailRecipient: models.AutomatedEmailRecipient
         },
         stripeAPIService: stripeService.api,
         tiersService: tiersService,
@@ -261,7 +260,11 @@ function createApiInstance(config) {
         commentsService,
         emailAddressService: emailAddressService.service,
         giftService,
-        customFieldsService
+        // Resolved here rather than passed as the module: the members service needs
+        // the values service itself, and reading it at construction is what ties the
+        // two together in boot order. Custom fields is initialised in initCore, the
+        // members API is built in initServices, so this is always the live instance.
+        customFieldValues: customFieldsService.values
     });
 
     return membersApiInstance;

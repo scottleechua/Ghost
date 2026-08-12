@@ -135,10 +135,17 @@ jobs:
               - '.github/actions/**'
               - '.github/scripts/**'
               - 'scripts/**'
+            docs:
+              - '**/*.md'
+              - '.agents/**'
+              - '.claude/**'
+              - '.github/workflows/ci.yml'
+              - 'package.json'
+              - 'scripts/check-agent-skill-links.js'
+              - 'scripts/test/check-agent-skill-links.test.js'
             core:
               - *shared
               - 'ghost/**'
-              - '!ghost/admin/**'
               - '!ghost/core/core/server/data/tinybird/**'
               # Unit tests + vitest config are exercised only by job_unit-tests;
               # they never affect the acceptance / legacy / ghost-cli jobs.
@@ -177,6 +184,12 @@ jobs:
               - '!ghost/core/vitest.config.ts'
               - '!koenig/*/test/**'
               - *renovate_only
+            # The Analytics E2E shards normally pull a prebuilt tb-cli image
+            # from GHCR, which is only republished from main. Without this the
+            # PR that changes the Dockerfile is the one PR that never exercises
+            # it — the break lands on main and surfaces in someone else's PR.
+            tb-cli:
+              - 'docker/tb-cli/**'
 
       - name: Define Node test matrix
         id: node_matrix
@@ -255,6 +268,8 @@ jobs:
       changed_i18n_apps: ${{ steps.affected.outputs.affected_i18n_projects != '' }}
       changed_core: ${{ steps.changed.outputs.core }}
       changed_any_code: ${{ steps.changed.outputs.any-code }}
+      changed_docs: ${{ steps.changed.outputs.docs }}
+      changed_tb_cli: ${{ steps.changed.outputs.tb-cli }}
       # Single gate for the build + browser-E2E lane. True for tags, or when a
       # changed file could affect a running Ghost instance (see the `e2e` path
       # filter above). A test-only / docs-only change keeps this false.
@@ -271,6 +286,7 @@ jobs:
       is_six: ${{ env.IS_SIX }}
       is_six_pr: ${{ env.IS_SIX_PR }}
       member_is_in_org: ${{ steps.check_user_org_membership.outputs.is_member }}
+      has_perf_tests_label: ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'perf-tests') }}
       node_version: ${{ env.NODE_VERSION }}
       node_test_matrix: ${{ steps.node_matrix.outputs.matrix }}
       nx_base: ${{ env.NX_BASE }}
@@ -373,12 +389,27 @@ jobs:
       - name: Lint boundaries
         run: pnpm nx run ghost-monorepo:lint:boundaries
 
-      - uses: tryghost/actions/actions/slack-build@3ab34d3d69687764be21eba3768f51f4ecc40ddd # main
+      - uses: tryghost/actions/actions/slack-build@e7a401946f91165a6426290705f501a377ec1533 # main
         if: failure() && github.event_name == 'push' && github.ref == 'refs/heads/main'
         with:
           status: ${{ job.status }}
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+  job_lint_docs:
+    name: Lint docs
+    runs-on: ubuntu-slim
+    needs: [job_setup]
+    if: needs.job_setup.outputs.changed_docs == 'true'
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Lint agent skills
+        run: node scripts/check-agent-skill-links.js
 
   job_i18n:
     runs-on: ubuntu-latest
@@ -432,19 +463,160 @@ jobs:
       - name: Merge Admin test coverage
         if: needs.job_setup.outputs.coverage_enabled == 'true'
         run: pnpm ember coverage-merge
-        working-directory: ghost/admin
+        working-directory: apps/ember-admin
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: needs.job_setup.outputs.coverage_enabled == 'true'
         with:
           name: admin-coverage
-          path: ghost/*/coverage/cobertura-coverage.xml
+          path: apps/*/coverage/cobertura-coverage.xml
 
-      - uses: tryghost/actions/actions/slack-build@3ab34d3d69687764be21eba3768f51f4ecc40ddd # main
+      - uses: tryghost/actions/actions/slack-build@e7a401946f91165a6426290705f501a377ec1533 # main
         if: failure() && github.event_name == 'push' && github.ref == 'refs/heads/main'
         with:
           status: ${{ job.status }}
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+  # Measures Ghost's boot time with hyperfine and appends the result to the
+  # long-running series charted at https://tryghost.github.io/Ghost-Benchmarks/
+  # (data lives on the gh-pages branch of TryGhost/Ghost-Benchmarks).
+  #
+  # Changing the runner label or the hyperfine version makes new results
+  # incomparable with the existing history - treat both as pinned.
+  job_perf-tests:
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    needs: [job_setup]
+    if: (needs.job_setup.outputs.changed_core == 'true' && needs.job_setup.outputs.is_development == 'true') || needs.job_setup.outputs.has_perf_tests_label == 'true'
+    name: Performance tests
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          # Boot activates the default theme, which is a submodule
+          submodules: true
+
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        env:
+          FORCE_COLOR: 0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install dependencies
+        # --force for the same reason as job_unit-tests: better-sqlite3 is an
+        # optionalDependency and boot uses it for the development database.
+        run: pnpm install --frozen-lockfile --force
+
+      - name: Install hyperfine
+        uses: ./.github/actions/install-hyperfine
+
+      - name: Build TS code
+        run: pnpm nx run-many -t build:tsc
+
+      - name: Run hyperfine on boot
+        working-directory: ghost/core
+        run: hyperfine --show-output --warmup 3 'GHOST_CI_SHUTDOWN_AFTER_BOOT=1 node index.js' --export-json boot-perf.json
+
+      - name: Report result
+        uses: ./.github/actions/report-boot-benchmark
+        with:
+          results-file: ghost/core/boot-perf.json
+          series: Benchmark
+          metric: Boot time
+          title: Boot time (dev tree)
+          github-token: ${{ secrets.CANARY_DOCKER_BUILD }}
+
+  # Boot time of the production image, as a series separate from job_perf-tests:
+  # that one tracks the code, this one tracks what ships (NODE_ENV=production, no
+  # devDependencies, jemalloc, baked compile cache). Never merge them - a base image
+  # bump would land in the code series as a regression with no Ghost commit behind it.
+  job_perf-tests-image:
+    name: Performance tests (production image)
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    needs: [job_setup, job_docker]
+    # Registry path only: benchmarks are a canonical-repo series, so this pulls the
+    # core image from GHCR rather than loading the artifact-path tarball.
+    if: |
+      needs.job_docker.result == 'success' &&
+      needs.job_docker.outputs.use-artifact == 'false' &&
+      ((needs.job_setup.outputs.changed_core == 'true' && needs.job_setup.outputs.is_development == 'true') || needs.job_setup.outputs.has_perf_tests_label == 'true')
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      # Only for .github/actions/load-docker-image; nothing is built from source here.
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Install hyperfine
+        uses: ./.github/actions/install-hyperfine
+
+      - name: Load core image
+        uses: ./.github/actions/load-docker-image
+        id: load
+        with:
+          use-artifact: 'false'
+          image-tags: ${{ needs.job_docker.outputs.image-core-tags }}
+
+      - name: Start MySQL
+        # Own network rather than a service container, so Ghost can reach it by name.
+        # Pinned by digest: a MySQL bump moves the measurement, so it should be a
+        # deliberate baseline change rather than drift in the series.
+        run: |
+          docker network create ghost-perf
+          docker run -d --name mysql --network ghost-perf \
+            --tmpfs /var/lib/mysql \
+            -e MYSQL_DATABASE=ghost \
+            -e MYSQL_ROOT_PASSWORD=root \
+            --health-cmd "mysqladmin ping -h 127.0.0.1 -uroot -proot" \
+            --health-interval=2s \
+            --health-timeout=5s \
+            --health-retries=60 \
+            mysql:8.0@sha256:7dcddc01f13bab2f15cde676d44d01f61fc9f99fe7785e86196dfc07d358ae2b
+          for _ in $(seq 1 60); do
+            if [ "$(docker inspect -f '{{.State.Health.Status}}' mysql)" = "healthy" ]; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "MySQL did not become healthy"
+          docker logs mysql
+          exit 1
+
+      - name: Start Ghost container
+        # Kept alive with `sleep` so each measured run is a `docker exec`; timing
+        # `docker run` would put container create/start inside the measurement.
+        env:
+          IMAGE_TAG: ${{ steps.load.outputs.image-tag }}
+        run: |
+          docker run -d --name ghost --network ghost-perf --entrypoint sleep \
+            -e GHOST_CI_SHUTDOWN_AFTER_BOOT=1 \
+            -e database__client=mysql \
+            -e database__connection__host=mysql \
+            -e database__connection__user=root \
+            -e database__connection__password=root \
+            -e database__connection__database=ghost \
+            "$IMAGE_TAG" infinity
+
+      - name: Run migrations (discarded first boot)
+        # A fresh database costs ~6.5s of migrations vs ~2.3s steady state.
+        run: docker exec ghost node index.js
+
+      - name: Run hyperfine on boot
+        run: hyperfine --show-output --warmup 3 'docker exec ghost node index.js' --export-json boot-perf-image.json
+
+      - name: Report result
+        uses: ./.github/actions/report-boot-benchmark
+        with:
+          results-file: boot-perf-image.json
+          # Own subdirectory in the benchmarks repo (like dx/), so this series gets its
+          # own chart and data file and the root series is left untouched.
+          data-dir: docker
+          series: Production image
+          metric: Boot time
+          title: Boot time (production image)
+          github-token: ${{ secrets.CANARY_DOCKER_BUILD }}
 
   job_unit-tests:
     runs-on: ubuntu-latest
@@ -516,7 +688,7 @@ jobs:
             exit 1
           fi
 
-      - uses: tryghost/actions/actions/slack-build@3ab34d3d69687764be21eba3768f51f4ecc40ddd # main
+      - uses: tryghost/actions/actions/slack-build@e7a401946f91165a6426290705f501a377ec1533 # main
         if: failure() && github.event_name == 'push' && github.ref == 'refs/heads/main'
         with:
           status: ${{ job.status }}
@@ -545,7 +717,7 @@ jobs:
           --health-timeout=5s
           --health-retries=60
       redis:
-        image: redis:7.0@sha256:352c1fdadc91926edda08f45aeb3f27f37194c2f14101229c0523a11195c96e3
+        image: redis:7.4@sha256:a8f08480e1f88f2647fed492d1178c06abb0d0c1fbf02c682a61e2f483fb3954
         ports:
           - 6379:6379
         options: >-
@@ -665,7 +837,7 @@ jobs:
             ghost/*/coverage-e2e/cobertura-coverage.xml
             ghost/*/coverage-integration/cobertura-coverage.xml
 
-      - uses: tryghost/actions/actions/slack-build@3ab34d3d69687764be21eba3768f51f4ecc40ddd # main
+      - uses: tryghost/actions/actions/slack-build@e7a401946f91165a6426290705f501a377ec1533 # main
         if: failure() && github.event_name == 'push' && github.ref == 'refs/heads/main'
         with:
           status: ${{ job.status }}
@@ -755,7 +927,7 @@ jobs:
             exit 1
           fi
 
-      - uses: tryghost/actions/actions/slack-build@3ab34d3d69687764be21eba3768f51f4ecc40ddd # main
+      - uses: tryghost/actions/actions/slack-build@e7a401946f91165a6426290705f501a377ec1533 # main
         if: failure() && github.event_name == 'push' && github.ref == 'refs/heads/main'
         with:
           status: ${{ job.status }}
@@ -841,7 +1013,7 @@ jobs:
           path: ${{ steps.app_name.outputs.root }}/playwright-report
           retention-days: 30
 
-      - uses: tryghost/actions/actions/slack-build@3ab34d3d69687764be21eba3768f51f4ecc40ddd # main
+      - uses: tryghost/actions/actions/slack-build@e7a401946f91165a6426290705f501a377ec1533 # main
         if: failure() && github.event_name == 'push' && github.ref == 'refs/heads/main'
         with:
           status: ${{ job.status }}
@@ -890,10 +1062,19 @@ jobs:
           ghost stop -d "$DIR"
 
       - name: Latest Release
+        # --force skips Ghost-CLI's version comparison between the archive and
+        # the installed release. Without it this step is coupled to how far the
+        # branch has drifted from main: a PR branched before the last release
+        # carries an older ghost/core version than what's on npm, and the CLI
+        # refuses with "Version in archive file ... is less than the current
+        # active version". Equal versions are just as bad in the other
+        # direction — the CLI logs "All up to date!", never installs the
+        # archive, and the curl below silently smoke-tests the published Ghost
+        # instead of this build. --force makes the update path run either way.
         run: |
           DIR=$(mktemp -d)
           ghost install local -d "$DIR"
-          ghost update -d "$DIR" --archive "$(pwd)/ghost.tgz"
+          ghost update -d "$DIR" --force --archive "$(pwd)/ghost.tgz"
           URL=$(ghost config get url -d "$DIR" --no-prompt --no-color | tail -n1)
           curl --retry 10 --retry-connrefused --retry-delay 3 -fsSI "$URL"
           ghost stop -d "$DIR"
@@ -903,7 +1084,7 @@ jobs:
         run: |
           [ -f ~/.ghost/logs/*.log ] && cat ~/.ghost/logs/*.log
 
-      - uses: tryghost/actions/actions/slack-build@3ab34d3d69687764be21eba3768f51f4ecc40ddd # main
+      - uses: tryghost/actions/actions/slack-build@e7a401946f91165a6426290705f501a377ec1533 # main
         if: failure() && github.event_name == 'push' && github.ref == 'refs/heads/main'
         with:
           status: ${{ job.status }}
@@ -985,7 +1166,7 @@ jobs:
           retention-days: 7
           if-no-files-found: error
 
-      - uses: tryghost/actions/actions/slack-build@3ab34d3d69687764be21eba3768f51f4ecc40ddd # main
+      - uses: tryghost/actions/actions/slack-build@e7a401946f91165a6426290705f501a377ec1533 # main
         if: failure() && github.event_name == 'push' && github.ref == 'refs/heads/main'
         with:
           status: ${{ job.status }}
@@ -1068,7 +1249,7 @@ jobs:
           retention-days: 7
           if-no-files-found: error
 
-      - uses: tryghost/actions/actions/slack-build@3ab34d3d69687764be21eba3768f51f4ecc40ddd # main
+      - uses: tryghost/actions/actions/slack-build@e7a401946f91165a6426290705f501a377ec1533 # main
         if: failure() && github.event_name == 'push' && github.ref == 'refs/heads/main'
         with:
           status: ${{ job.status }}
@@ -1156,7 +1337,7 @@ jobs:
 
       - name: Log in to GitHub Container Registry
         if: steps.strategy.outputs.should-push == 'true'
-        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4
+        uses: docker/login-action@abd2ef45e78c5afb21d64d4ca52ee8550d9572c7 # v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -1218,6 +1399,29 @@ jobs:
           labels: ${{ steps.meta-core.outputs.labels }}
           cache-from: type=registry,ref=${{ steps.strategy.outputs.image-core-name }}:cache-main
           cache-to: ${{ steps.strategy.outputs.should-push == 'true' && format('type=registry,ref={0}:cache-{1},mode=max', steps.strategy.outputs.image-core-name, github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || 'main') || '' }}
+
+      # Uploaded here, before the full image is even built: on the artifact path
+      # consumers (Ghost-Moya CD) need the core image — server only, no admin —
+      # and would otherwise have to fall back to `docker-image-production`.
+      - name: Save core image as artifact
+        if: steps.strategy.outputs.use-artifact == 'true'
+        run: |
+          IMAGE_TAG=$(echo "${{ steps.meta-core.outputs.tags }}" | head -n1)
+          echo "Saving image: $IMAGE_TAG"
+          # Written outside the repo root: a stray tarball there would change the
+          # `.` context between the core and full builds and bust the deploy-stage
+          # COPY cache (same reason the admin artifact lands in RUNNER_TEMP below).
+          docker save "$IMAGE_TAG" | gzip > "${RUNNER_TEMP}/docker-image-core.tar.gz"
+          ls -lh "${RUNNER_TEMP}/docker-image-core.tar.gz"
+
+      - name: Upload core image artifact
+        if: steps.strategy.outputs.use-artifact == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: docker-image-core
+          path: ${{ runner.temp }}/docker-image-core.tar.gz
+          retention-days: 1
+          if-no-files-found: error
 
       # Synchronise with job_build_admin only now, after core is built: the full
       # image is core + admin. No `needs` edge, so the two jobs run concurrently
@@ -1464,6 +1668,7 @@ jobs:
 
     outputs:
       use-artifact: ${{ steps.strategy.outputs.use-artifact }}
+      image-core-tags: ${{ steps.meta-core.outputs.tags }}
       image-e2e-name: ${{ steps.strategy.outputs.image-e2e-name }}
       image-e2e-tags: ${{ steps.meta-e2e.outputs.tags }}
 
@@ -1600,10 +1805,17 @@ jobs:
 
       - name: Pull or build Tinybird CLI Image
         if: matrix.analytics == 'true'
+        env:
+          CHANGED_TB_CLI: ${{ needs.job_setup.outputs.changed_tb_cli }}
         run: |
           COMPOSE_IMAGE="${COMPOSE_PROJECT_NAME:-ghost-dev}-tb-cli"
-          # Try pulling pre-built image from GHCR first (fast path)
-          if docker pull ghcr.io/tryghost/tb-cli:latest 2>/dev/null; then
+          # GHCR's :latest is only republished from main, so it can't reflect a
+          # Dockerfile change under review — build from source when this PR
+          # touches it, otherwise take the prebuilt fast path.
+          if [[ "$CHANGED_TB_CLI" == 'true' ]]; then
+            echo "docker/tb-cli changed, building from source"
+            docker buildx build --load -t "$COMPOSE_IMAGE" -f docker/tb-cli/Dockerfile .
+          elif docker pull ghcr.io/tryghost/tb-cli:latest 2>/dev/null; then
             echo "Pulled tb-cli from GHCR"
             docker tag ghcr.io/tryghost/tb-cli:latest "$COMPOSE_IMAGE"
           else
@@ -1674,7 +1886,7 @@ jobs:
           path: e2e/test-results
           retention-days: 7
 
-      - uses: tryghost/actions/actions/slack-build@3ab34d3d69687764be21eba3768f51f4ecc40ddd # main
+      - uses: tryghost/actions/actions/slack-build@e7a401946f91165a6426290705f501a377ec1533 # main
         if: failure() && github.event_name == 'push' && github.ref == 'refs/heads/main'
         with:
           status: ${{ job.status }}
@@ -1791,14 +2003,14 @@ jobs:
       - name: Move coverage
         if: contains(needs.job_admin-tests.result, 'success')
         run: |
-          rsync -av --remove-source-files admin/* ghost/admin
+          rsync -av --remove-source-files ember-admin/* apps/ember-admin
 
       - name: Upload Admin test coverage
         if: contains(needs.job_admin-tests.result, 'success')
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v6
         with:
           flags: admin-tests
-          files: ghost/admin/coverage/cobertura-coverage.xml
+          files: apps/ember-admin/coverage/cobertura-coverage.xml
           disable_search: true
 
       - name: Restore E2E coverage
@@ -1828,6 +2040,7 @@ jobs:
         job_app_version_bump_check,
         job_migration_integrity_check,
         job_lint,
+        job_lint_docs,
         job_i18n,
         job_build_admin,
         job_pack,
@@ -1927,14 +2140,12 @@ jobs:
         run: |
           echo "@tryghost:registry=https://registry.npmjs.org/" >> ~/.npmrc
 
-      # TODO: Check we can remove this once we update Node to v24
-      - name: Install v11 of NPM # We need this to install packages via OIDC.
-        run: npm install -g npm@11
-
+      # --provenance is explicit rather than relying on pnpm's auto-detection,
+      # which degrades to a warning if it can't confirm visibility.
       - name: Publish to npm
         working-directory: ${{ matrix.package_path }}
         run: |
-          pnpm publish --access public --no-git-checks
+          pnpm publish --access public --provenance --no-git-checks
 
       - name: Replace version placeholders in cdn-paths
         id: cdn_paths
@@ -2039,8 +2250,12 @@ jobs:
       - name: Verify tarball contents
         run: tar -xOf ghost-*.tgz package/package.json | jq -e '.packageManager' >/dev/null
 
+      # --provenance is explicit so a publish without an attestation fails the
+      # job instead of warning. Safe with no repo checkout: the SLSA statement
+      # is built from the GITHUB_* env vars plus the tarball digest, and the
+      # subject comes from the packed manifest — nothing reads a working tree.
       - name: Publish to npm
-        run: npm publish ghost-*.tgz --access public
+        run: npm publish ghost-*.tgz --access public --provenance
 
   # NOTE: Publishing the other workspace packages (koenig/*, packages/*, ...) is
   # NOT a job here. The release tag triggers publish-packages.yml directly, in

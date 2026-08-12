@@ -1,11 +1,12 @@
 /**
  * Offers screen selector strings, consumed by the admin screen helpers.
- * Source of truth: apps/admin-x-settings/src/components/settings/growth/offers.
+ * Source of truth: apps/admin/src/settings/app/components/settings/growth/offers.
  */
 export const offersSelectors = {
     testIds: {
         section: "offers",
         listModal: "offers-modal",
+        tableBody: "offers-table-body",
         listRow: "offer-item",
         retentionRow: "retention-offer-item",
         retentionRedemptionsLink: (cadence: "monthly" | "yearly") => `retention-redemptions-link-${cadence}`,

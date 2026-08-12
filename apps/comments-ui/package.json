@@ -1,7 +1,7 @@
 {
     "name": "@tryghost/comments-ui",
     "type": "module",
-    "version": "1.5.22",
+    "version": "1.6.0",
     "license": "MIT",
     "repository": "https://github.com/TryGhost/Ghost",
     "author": "Ghost Foundation",
@@ -45,7 +45,7 @@
         ]
     },
     "dependencies": {
-        "@doist/react-interpolate": "2.2.3",
+        "@doist/react-interpolate": "2.2.4",
         "@headlessui/react": "1.7.19",
         "@tiptap/core": "2.27.2",
         "@tiptap/extension-blockquote": "2.27.2",

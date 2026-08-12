@@ -9,7 +9,7 @@ const RoutingService = require('./routing-service');
 const models = require('../../models');
 const events = require('../../lib/common/events');
 const externalRequest = require('../../../server/lib/request-external.js');
-const urlUtils = require('../../../shared/url-utils');
+const urlUtils = require('../../../shared/url-utils').default;
 const outputSerializerUrlUtil = require('../../../server/api/endpoints/utils/serializers/output/utils/url');
 const urlService = require('../url');
 const settingsCache = require('../../../shared/settings-cache');
@@ -20,7 +20,7 @@ const jobsService = require('../mentions-jobs');
 // relations it reads for filtered collections (event-emitted models don't
 // reliably carry them).
 async function getPostData(post) {
-    const missing = urlService.facade.getRequiredRelations().filter(relation => !post.relations[relation]);
+    const missing = urlService.getRequiredRelations().filter(relation => !post.relations[relation]);
     if (missing.length) {
         await post.load(missing);
     }
@@ -29,7 +29,11 @@ async function getPostData(post) {
 
 function getPostUrl(id, postData) {
     const jsonModel = {...postData};
-    outputSerializerUrlUtil.forPost(id, jsonModel, {options: {}});
+    // The URL service routes by resource type. Pages and posts share the Post
+    // model, so the page's own type must reach forPost — otherwise it defaults
+    // to 'posts', matches no post collection, and 404s.
+    const type = postData.type === 'page' ? 'pages' : 'posts';
+    outputSerializerUrlUtil.forPost(id, jsonModel, {options: {}}, type);
     return jsonModel.url;
 }
 

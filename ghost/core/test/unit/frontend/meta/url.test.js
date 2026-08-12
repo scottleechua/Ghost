@@ -1,7 +1,7 @@
 const assert = require('node:assert/strict');
 const sinon = require('sinon');
 const logging = require('@tryghost/logging');
-const urlUtils = require('../../../../core/shared/url-utils');
+const urlUtils = require('../../../../core/shared/url-utils').default;
 const urlService = require('../../../../core/server/services/url');
 const getUrl = require('../../../../core/frontend/meta/url');
 const testUtils = require('../../../utils');
@@ -12,7 +12,7 @@ describe('getUrl', function () {
     let urlUtilsAbsoluteToRelativeStub;
 
     beforeEach(function () {
-        urlServiceGetUrlForResourceStub = sinon.stub(urlService.facade, 'getUrlForResource');
+        urlServiceGetUrlForResourceStub = sinon.stub(urlService, 'getUrlForResource');
         urlUtilsUrlForStub = sinon.stub(urlUtils, 'urlFor');
         urlUtilsAbsoluteToRelativeStub = sinon.stub(urlUtils, 'absoluteToRelative');
     });

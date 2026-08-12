@@ -8,6 +8,7 @@ import {MEMBER_WELCOME_EMAIL_SLUGS} from '../../../../../core/server/services/me
 import {Member} from '../../../../../core/server/models';
 
 const settingsCache = require('../../../../../core/shared/settings-cache');
+const labs = require('../../../../../core/shared/labs');
 
 const MAX_STEPS_PER_BATCH = 100;
 const RETRY_DELAY_MS = 10 * 60 * 1000;
@@ -124,6 +125,7 @@ describe('automations poll', function () {
     let scheduleAutomationEmailAnalyticsJob: sinon.SinonStub;
     let options: PollOptionsStubs;
     let settingsCacheGet: sinon.SinonStub;
+    let labsIsSet: sinon.SinonStub;
 
     beforeEach(function () {
         sinon.useFakeTimers({now: new Date('2026-01-01T12:00:00.000Z'), shouldAdvanceTime: true});
@@ -154,7 +156,10 @@ describe('automations poll', function () {
         };
 
         settingsCacheGet = sinon.stub(settingsCache, 'get');
+        settingsCacheGet.withArgs('email_track_clicks').returns(false);
         settingsCacheGet.withArgs('email_track_opens').returns(false);
+        labsIsSet = sinon.stub(labs, 'isSet');
+        labsIsSet.withArgs('automationAnalytics').returns(true);
         sinon.stub(Member, 'findOne').resolves(buildMember());
     });
 
@@ -363,11 +368,13 @@ describe('automations poll', function () {
         }));
         sinon.assert.calledOnceWithExactly(automationsApi.recordEmailSent, {
             automationActionRevisionId: 'revision-id',
+            automationRunStepId: step.id,
             mailgunMessageId: 'mailgun-message-id',
             memberEmail: 'member@example.com',
             memberId: 'member-id',
             memberName: 'Test Member',
             memberUuid: '00000000-0000-4000-8000-000000000001',
+            trackClicks: false,
             trackOpens: false
         });
         sinon.assert.callOrder(
@@ -423,6 +430,61 @@ describe('automations poll', function () {
         sinon.assert.notCalled(scheduleAutomationEmailAnalyticsJob);
     });
 
+    it('snapshots enabled click tracking on the recipient', async function () {
+        const step = buildEmailStep();
+        automationsApi.fetchAndLockSteps.resolves({steps: [step], nextStepReadyAt: null});
+        settingsCacheGet.withArgs('email_track_clicks').returns(true);
+
+        await poll(options);
+
+        sinon.assert.calledOnceWithExactly(automationsApi.recordEmailSent, sinon.match({
+            automationRunStepId: step.id,
+            trackClicks: true
+        }));
+        sinon.assert.calledOnceWithExactly(memberWelcomeEmailService.api.sendAutomationEmail, sinon.match({
+            trackClicks: true,
+            automationActionRevisionId: step.automation_action_revision_id,
+            automationRunStepId: step.id
+        }));
+    });
+
+    it('snapshots disabled click tracking on the recipient', async function () {
+        const step = buildEmailStep();
+        automationsApi.fetchAndLockSteps.resolves({steps: [step], nextStepReadyAt: null});
+        settingsCacheGet.withArgs('email_track_clicks').returns(false);
+
+        await poll(options);
+
+        sinon.assert.calledOnceWithExactly(automationsApi.recordEmailSent, sinon.match({
+            automationRunStepId: step.id,
+            trackClicks: false
+        }));
+        sinon.assert.calledOnceWithExactly(memberWelcomeEmailService.api.sendAutomationEmail, sinon.match({
+            trackClicks: false,
+            automationActionRevisionId: step.automation_action_revision_id,
+            automationRunStepId: step.id
+        }));
+    });
+
+    it('disables click tracking when automation analytics are disabled', async function () {
+        const step = buildEmailStep();
+        automationsApi.fetchAndLockSteps.resolves({steps: [step], nextStepReadyAt: null});
+        settingsCacheGet.withArgs('email_track_clicks').returns(true);
+        labsIsSet.withArgs('automationAnalytics').returns(false);
+
+        await poll(options);
+
+        sinon.assert.calledOnceWithExactly(automationsApi.recordEmailSent, sinon.match({
+            automationRunStepId: step.id,
+            trackClicks: false
+        }));
+        sinon.assert.calledOnceWithExactly(memberWelcomeEmailService.api.sendAutomationEmail, sinon.match({
+            trackClicks: false,
+            automationActionRevisionId: step.automation_action_revision_id,
+            automationRunStepId: step.id
+        }));
+    });
+
     it('records the automated email recipient without a Mailgun message ID after an SMTP send', async function () {
         const step = buildEmailStep({
             automation_action_revision_id: 'revision-id'
@@ -441,10 +503,12 @@ describe('automations poll', function () {
         }));
         sinon.assert.calledOnceWithExactly(automationsApi.recordEmailSent, {
             automationActionRevisionId: 'revision-id',
+            automationRunStepId: step.id,
             memberEmail: 'member@example.com',
             memberId: 'member-id',
             memberName: 'Test Member',
             memberUuid: '00000000-0000-4000-8000-000000000001',
+            trackClicks: false,
             trackOpens: false
         });
         sinon.assert.callOrder(

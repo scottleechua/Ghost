@@ -13,10 +13,10 @@ class SlackPingServiceWrapper {
         const {blogIcon} = require('../../lib/image');
         const events = require('../../lib/common/events');
         const logging = require('@tryghost/logging');
-        const request = require('@tryghost/request');
+        const request = require('../../lib/request-external');
         const settingsCache = require('../../../shared/settings-cache');
         const urlService = require('../url');
-        const urlUtils = require('../../../shared/url-utils');
+        const urlUtils = require('../../../shared/url-utils').default;
 
         this.service = new SlackPingService({
             blogIcon,

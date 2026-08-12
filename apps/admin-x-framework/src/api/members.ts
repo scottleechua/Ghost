@@ -220,7 +220,14 @@ export type ImportMembersCompleteResponseType = {
         originalImportSize?: number;
         stats: {
             imported: number;
-            invalid?: Array<Record<string, string> & {error: string}>;
+            // The submitted row echoed back, so the remaining keys are whatever columns the
+            // CSV had. `errors` is why the row failed; `error` is those reasons written out
+            // for the error report's single cell.
+            invalid?: Array<{
+                [column: string]: unknown;
+                error: string;
+                errors: string[];
+            }>;
         };
         import_label?: ImportMembersImportLabel | null;
     };
@@ -501,10 +508,10 @@ export interface EditMemberData {
     tiers?: Array<{id: string; expiry_at?: string | null}>;
     // Merge semantics: only the keys present are written; `null` clears a
     // value. Values are strings for text-backed fields and composite objects
-    // for address (Partial because a draft mid-edit may hold an incomplete
-    // address — the server validates completeness, not this type). Requires
-    // the `membersCustomFields` flag server-side.
-    custom_fields?: Record<string, string | Partial<Address> | null>;
+    // for address — every sub-field of which is optional, the server asking
+    // only that one of them is filled in. Requires the `membersCustomFields`
+    // flag server-side.
+    custom_fields?: Record<string, string | Address | null>;
 }
 
 export const useEditMember = createMutation<MembersResponseType, EditMemberData>({
@@ -618,7 +625,7 @@ const MEMBER_ACTIVITY_LIMIT = '20';
 // KNOWN LIMITATION: the cursor is `created_at`-only, without the id tie-breaker
 // Ember's version added (`+id:<'<lastId>'`). Two events emitted in the same
 // second on a page boundary can be skipped from the paginated list. The current
-// consumer (`MemberActivityFeed` in `apps/posts`) only fetches 5 events and
+// consumer (`MemberActivityFeed` in `apps/admin`) only fetches 5 events and
 // never calls `fetchNextPage`, so this is not exploitable today; add an id
 // secondary cursor before another screen starts paginating.
 function memberEventsCursor(events: MemberActivityEvent[]): string | undefined {
