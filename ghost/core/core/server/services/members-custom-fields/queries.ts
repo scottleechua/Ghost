@@ -1,5 +1,5 @@
-import type {Knex} from 'knex';
-import {FIELD_STATUS} from './schema';
+import type { Knex } from 'knex';
+import { FIELD_STATUS } from './schema';
 
 const FIELDS_TABLE = 'members_custom_fields';
 
@@ -9,7 +9,21 @@ const FIELDS_TABLE = 'members_custom_fields';
 
 /** Takes the executor so the same query runs standalone or inside a write's transaction. */
 export function activeFields(db: Knex) {
-    return db(FIELDS_TABLE).where('status', FIELD_STATUS.active);
+  return db(FIELDS_TABLE).where('status', FIELD_STATUS.active);
+}
+
+/**
+ * A narrowed query against the definitions table, whatever it has narrowed by.
+ *
+ * Named rather than inferred from `activeFields`, so a caller that narrows some other way —
+ * one key, a publisher's filter — states the same type instead of asserting its way back to
+ * it.
+ */
+export type DefinitionQuery = ReturnType<typeof activeFields>;
+
+/** One field by key, as the same kind of query the rest of this reads through. */
+export function fieldByKey(db: Knex, key: string): DefinitionQuery {
+  return db(FIELDS_TABLE).where(`${FIELDS_TABLE}.key`, key);
 }
 
 /**
@@ -20,9 +34,9 @@ export function activeFields(db: Knex) {
  * default rank; `id` settles the rest so the order is total.
  */
 export function inFieldOrder<T extends Knex.QueryBuilder>(query: T): T {
-    query
-        .orderBy(`${FIELDS_TABLE}.sort_order`, 'asc')
-        .orderBy(`${FIELDS_TABLE}.created_at`, 'asc')
-        .orderBy(`${FIELDS_TABLE}.id`, 'asc');
-    return query;
+  query
+    .orderBy(`${FIELDS_TABLE}.sort_order`, 'asc')
+    .orderBy(`${FIELDS_TABLE}.created_at`, 'asc')
+    .orderBy(`${FIELDS_TABLE}.id`, 'asc');
+  return query;
 }

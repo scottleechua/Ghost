@@ -4,159 +4,163 @@
 // but that's not the problem the index.js max - line eslint "proxy" rule is there to solve.
 
 module.exports = {
-    get all() {
-        return require('./all');
-    },
+  get all() {
+    return require('./all');
+  },
 
-    get default() {
-        return require('./default');
-    },
+  get default() {
+    return require('./default');
+  },
 
-    get comments() {
-        return require('./comments');
-    },
+  get comments() {
+    return require('./comments');
+  },
 
-    get member_commenting() {
-        return require('./member-commenting');
-    },
+  get member_commenting() {
+    return require('./member-commenting');
+  },
 
-    get authentication() {
-        return require('./authentication');
-    },
+  get authentication() {
+    return require('./authentication');
+  },
 
-    get db() {
-        return require('./db');
-    },
+  get db() {
+    return require('./db');
+  },
 
-    get explore() {
-        return require('./explore');
-    },
+  get exports() {
+    return require('./exports');
+  },
 
-    get pages() {
-        return require('./pages');
-    },
+  get pages() {
+    return require('./pages');
+  },
 
-    get gift_links() {
-        return require('./gift-links');
-    },
+  get gift_links() {
+    return require('./gift-links');
+  },
 
-    get redirects() {
-        return require('./redirects');
-    },
+  get redirects() {
+    return require('./redirects');
+  },
 
-    get roles() {
-        return require('./roles');
-    },
+  get roles() {
+    return require('./roles');
+  },
 
-    get slugs() {
-        return require('./slugs');
-    },
+  get slugs() {
+    return require('./slugs');
+  },
 
-    get schedules() {
-        return require('./schedules');
-    },
+  get schedules() {
+    return require('./schedules');
+  },
 
-    get posts() {
-        return require('./posts');
-    },
+  get posts() {
+    return require('./posts');
+  },
 
-    get settings() {
-        return require('./settings');
-    },
+  get settings() {
+    return require('./settings');
+  },
 
-    get notifications() {
-        return require('./notifications');
-    },
+  get notifications() {
+    return require('./notifications');
+  },
 
-    get mail() {
-        return require('./mail');
-    },
+  get mail() {
+    return require('./mail');
+  },
 
-    get members() {
-        return require('./members');
-    },
+  get members() {
+    return require('./members');
+  },
 
-    get members_custom_fields() {
-        return require('./member-custom-fields');
-    },
+  get members_custom_fields() {
+    return require('./member-custom-fields');
+  },
 
-    get tiers() {
-        return require('./tiers');
-    },
+  get tiers() {
+    return require('./tiers');
+  },
 
-    get images() {
-        return require('./images');
-    },
+  get tiers_checkout_config() {
+    return require('./tiers-checkout-config');
+  },
 
-    get media() {
-        return require('./media');
-    },
+  get images() {
+    return require('./images');
+  },
 
-    get files() {
-        return require('./files');
-    },
+  get media() {
+    return require('./media');
+  },
 
-    get users() {
-        return require('./users');
-    },
+  get files() {
+    return require('./files');
+  },
 
-    get previews() {
-        return require('./previews');
-    },
+  get users() {
+    return require('./users');
+  },
 
-    get email_post() {
-        return require('./email-posts');
-    },
+  get previews() {
+    return require('./previews');
+  },
 
-    get emails() {
-        return require('./emails');
-    },
+  get email_post() {
+    return require('./email-posts');
+  },
 
-    get oembed() {
-        return require('./oembed');
-    },
+  get emails() {
+    return require('./emails');
+  },
 
-    get config() {
-        return require('./config');
-    },
+  get oembed() {
+    return require('./oembed');
+  },
 
-    get themes() {
-        return require('./themes');
-    },
+  get config() {
+    return require('./config');
+  },
 
-    get site() {
-        return require('./site');
-    },
+  get themes() {
+    return require('./themes');
+  },
 
-    get custom_theme_settings() {
-        return require('./custom-theme-settings');
-    },
+  get site() {
+    return require('./site');
+  },
 
-    get slack() {
-        return require('./slack');
-    },
+  get custom_theme_settings() {
+    return require('./custom-theme-settings');
+  },
 
-    get session() {
-        return require('./session');
-    },
+  get slack() {
+    return require('./slack');
+  },
 
-    get members_stripe_connect() {
-        return require('./members-stripe-connect');
-    },
+  get session() {
+    return require('./session');
+  },
 
-    get links() {
-        return require('./links');
-    },
+  get members_stripe_connect() {
+    return require('./members-stripe-connect');
+  },
 
-    get search_index() {
-        return require('./search-index');
-    },
+  get links() {
+    return require('./links');
+  },
 
-    get tinybird() {
-        return require('./tinybird');
-    },
+  get search_index() {
+    return require('./search-index');
+  },
 
-    get featurebase() {
-        return require('./featurebase');
-    }
+  get tinybird() {
+    return require('./tinybird');
+  },
+
+  get featurebase() {
+    return require('./featurebase');
+  },
 };

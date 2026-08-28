@@ -1,4 +1,4 @@
-import {z} from 'zod';
+import { z } from 'zod';
 
 /**
  * The shared catalog of member custom field types.
@@ -48,11 +48,16 @@ import {z} from 'zod';
  * rule was broken. No storage: columns and codecs belong to the backend. One exception
  * lives in `./csv` — how a value maps onto CSV columns — because both tiers need the same
  * answer and a disagreement between them is a file that silently stops round-tripping.
+ *
+ * The line is whether more than one renderer must agree on a string, not presentation
+ * against validity — the sentences above are presentation. Admin is the only renderer
+ * today, so a part's label lives there, held against this file by a type. A Portal
+ * collection form, which cannot reach admin's packages, moves the labels here.
  */
 
 /** The source for the union type, the zod enum and the `FIELD_TYPES` keys alike. */
 export const FIELD_TYPE_IDS = ['short_text', 'long_text', 'address'] as const;
-export type FieldType = typeof FIELD_TYPE_IDS[number];
+export type FieldType = (typeof FIELD_TYPE_IDS)[number];
 export const FieldTypeSchema = z.enum(FIELD_TYPE_IDS);
 
 /**
@@ -72,13 +77,14 @@ const byteLength = (value: string): number => new TextEncoder().encode(value).le
  * Builders are named after what a value is rather than taking a size, so that a bound
  * lives with everything else true of that thing instead of as a number at the call site.
  */
-const text = () => z.string({error: 'Enter text.'}).trim();
+const text = () => z.string({ error: 'Enter text.' }).trim();
 
-const shortText = () => text().max(255, {error: 'Use 255 characters or fewer.'});
+const shortText = () => text().max(255, { error: 'Use 255 characters or fewer.' });
 
-const longText = () => text().refine(value => byteLength(value) <= MAX_LONG_TEXT_BYTES, {
-    error: 'This text is too long to save. Shorten it a little.'
-});
+const longText = () =>
+  text().refine((value) => byteLength(value) <= MAX_LONG_TEXT_BYTES, {
+    error: 'This text is too long to save. Shorten it a little.',
+  });
 
 /**
  * A postal code, bounded well under a street address because no country's is long. The
@@ -86,7 +92,7 @@ const longText = () => text().refine(value => byteLength(value) <= MAX_LONG_TEXT
  * countries to check the shape of one without knowing which country it is for, and the
  * country is a sibling part rather than something this can see.
  */
-const postalCode = () => text().max(32, {error: 'Use 32 characters or fewer.'});
+const postalCode = () => text().max(32, { error: 'Use 32 characters or fewer.' });
 
 /**
  * The shape of an ISO 3166-1 alpha-2 code, deliberately not checked against the list of
@@ -100,7 +106,10 @@ const postalCode = () => text().max(32, {error: 'Use 32 characters or fewer.'});
  * Checked as two ASCII letters on the way in rather than by length on the way out, because
  * uppercasing does not preserve length: `ß` becomes `SS` and `aß` becomes `ASS`.
  */
-const countryCode = () => text().regex(/^[A-Za-z]{2}$/, {error: 'Enter a 2-letter country code, like US.'}).toUpperCase();
+const countryCode = () =>
+  text()
+    .regex(/^[A-Za-z]{2}$/, { error: 'Enter a 2-letter country code, like US.' })
+    .toUpperCase();
 
 /**
  * Both ends are pinned to a string because storage keeps one string per leaf: a type
@@ -115,28 +124,36 @@ type PartSchema = z.ZodType<string, string>;
  * A rule that is a bound would admit empty on its own; one that is a format would not,
  * and would leave its part the only one that could be set but never removed.
  */
-const clearable = <T extends PartSchema>(part: T) => text().pipe(z.union([z.literal(''), part])).optional();
+const clearable = <T extends PartSchema>(part: T) =>
+  text()
+    .pipe(z.union([z.literal(''), part]))
+    .optional();
 
 export interface FieldTypeDefinition {
-    value: z.ZodType;
-    /**
-     * A record type's parts, in declaration order. Each part's own rule, and nothing
-     * about how a write may name it: validate against `value`, never against these.
-     */
-    fields?: Record<string, PartSchema>;
+  value: z.ZodType;
+  /**
+   * A record type's parts, in declaration order. Each part's own rule, and nothing
+   * about how a write may name it: validate against `value`, never against these.
+   */
+  fields?: Record<string, PartSchema>;
 }
 
 type FieldTypeDeclaration = PartSchema | FieldTypeDefinition;
 
-type Defined<D> = D extends z.ZodType ? {value: D} : D;
+type Defined<D> = D extends z.ZodType ? { value: D } : D;
 
 /** A type that is simply a value is declared as one; a record announces itself. */
-function defineFieldTypes<D extends Record<FieldType, FieldTypeDeclaration>>(declarations: D): {[K in keyof D]: Defined<D[K]>} {
-    // Restated for the type system, which cannot follow a conditional through
-    // `Object.fromEntries`.
-    return Object.fromEntries(
-        Object.entries(declarations).map(([type, declared]) => [type, declared instanceof z.ZodType ? {value: declared} : declared])
-    ) as {[K in keyof D]: Defined<D[K]>};
+function defineFieldTypes<D extends Record<FieldType, FieldTypeDeclaration>>(
+  declarations: D,
+): { [K in keyof D]: Defined<D[K]> } {
+  // Restated for the type system, which cannot follow a conditional through
+  // `Object.fromEntries`.
+  return Object.fromEntries(
+    Object.entries(declarations).map(([type, declared]) => [
+      type,
+      declared instanceof z.ZodType ? { value: declared } : declared,
+    ]),
+  ) as { [K in keyof D]: Defined<D[K]> };
 }
 
 /**
@@ -149,45 +166,81 @@ function defineFieldTypes<D extends Record<FieldType, FieldTypeDeclaration>>(dec
  * explicitly undefined survives parsing as a key holding undefined, and a bare presence
  * check would let `{line1: undefined}` through as if it named something.
  */
-function record<F extends Record<string, PartSchema>>(fields: F, {error}: {error: string}) {
-    // Restated for the type system, which loses the key-to-schema mapping through
-    // `Object.fromEntries`; without it every type built on a record infers as `unknown`.
-    const shape = Object.fromEntries(
-        Object.entries(fields).map(([key, part]) => [key, clearable(part)])
-    ) as {[K in keyof F]: ReturnType<typeof clearable<F[K]>>};
+function record<F extends Record<string, PartSchema>>(fields: F, { error }: { error: string }) {
+  // Restated for the type system, which loses the key-to-schema mapping through
+  // `Object.fromEntries`; without it every type built on a record infers as `unknown`.
+  const shape = Object.fromEntries(
+    Object.entries(fields).map(([key, part]) => [key, clearable(part)]),
+  ) as { [K in keyof F]: ReturnType<typeof clearable<F[K]>> };
 
-    // Strict, so a part nobody declared is refused rather than dropped. That refusal keeps
-    // zod's wording, which names the offending key.
-    const value = z.strictObject(shape).refine(
-        parts => Object.values(parts).some(part => typeof part === 'string'),
-        {error}
-    );
+  // Strict, so a part nobody declared is refused rather than dropped. That refusal keeps
+  // zod's wording, which names the offending key.
+  const value = z
+    .strictObject(shape)
+    .refine((parts) => Object.values(parts).some((part) => typeof part === 'string'), { error });
 
-    return {value, fields};
+  return { value, fields };
 }
 
 export const FIELD_TYPES = defineFieldTypes({
-    short_text: shortText(),
-    long_text: longText(),
-    // An address is a delivery address, so its bounds are what a courier will accept
-    // rather than what the column could hold. Modelled on Stripe's Address object.
-    address: record({
-        line1: shortText(),
-        line2: shortText(),
-        city: shortText(),
-        state: shortText(),
-        postal_code: postalCode(),
-        country: countryCode()
-    }, {error: 'Enter at least one part of the address.'})
+  short_text: shortText(),
+  long_text: longText(),
+  // An address is a delivery address, so its bounds are what a courier will accept
+  // rather than what the column could hold. Modelled on Stripe's Address object.
+  //
+  // Who the parcel is addressed to is not here. A parcel needs a name as well as an
+  // address, but that is a fact about posting parcels rather than about either type,
+  // and the name is often not the account name — gift subscriptions, workplace
+  // deliveries, c/o. A site that needs one keeps it in a field of its own, which is
+  // also how Stripe hands it back: beside the address rather than inside it.
+  address: record(
+    {
+      line1: shortText(),
+      line2: shortText(),
+      city: shortText(),
+      state: shortText(),
+      postal_code: postalCode(),
+      country: countryCode(),
+    },
+    { error: 'Enter at least one part of the address.' },
+  ),
 });
 
 /** Named for the admin types built on it, which speak of an address rather than a record. */
 export const AddressValue = FIELD_TYPES.address.value;
 export type Address = z.infer<typeof AddressValue>;
 
-/** The parts of a record type in declaration order, or null for a type with none. */
-export function subFieldsOf(type: FieldType): string[] | null {
-    // Through the interface, not the literal: a type with no parts has no `fields` key.
-    const {fields}: FieldTypeDefinition = FIELD_TYPES[type];
-    return fields ? Object.keys(fields) : null;
+/**
+ * A value of any field type, as a caller holding a field of unknown type must accept it.
+ *
+ * Derived from the schemas rather than listed, so a type added here widens it without
+ * anyone remembering to.
+ */
+export type FieldValue = { [T in FieldType]: z.infer<(typeof FIELD_TYPES)[T]['value']> }[FieldType];
+
+/**
+ * The parts a record type declares, or never for a type whose value is a single thing.
+ *
+ * Distributed over `T`, so a caller holding a type it only knows as `FieldType` gets every
+ * part any type declares rather than the empty intersection of all of them.
+ */
+export type PartsOf<T extends FieldType> = T extends FieldType
+  ? (typeof FIELD_TYPES)[T] extends { fields: infer F }
+    ? Extract<keyof F, string>
+    : never
+  : never;
+
+/**
+ * The parts of a record type in declaration order, or null for a type with none.
+ *
+ * Typed to the parts the caller's type declares, so a caller holding one of these can
+ * index a value of that type without restating which parts exist.
+ */
+export function subFieldsOf<T extends FieldType>(type: T): PartsOf<T>[] | null {
+  // Through the interface, not the literal: a type with no parts has no `fields` key.
+  // Optional because a caller built against an older catalog than the server it talks to
+  // reaches here with a type this build has never heard of, which reads as no parts.
+  const definition: FieldTypeDefinition | undefined = FIELD_TYPES[type];
+  // The keys are `PartsOf<T>` by construction: `fields` is the object it reads `keyof` from.
+  return definition?.fields ? (Object.keys(definition.fields) as PartsOf<T>[]) : null;
 }
