@@ -9,52 +9,16 @@ const models = require('../../models');
 const sentry = require('../../../shared/sentry');
 const domainEvents = require('@tryghost/domain-events');
 const config = require('../../../shared/config');
-const WorkerModelEventBridge = require('./worker-model-event-bridge');
 const errorHandler = (error, workerMeta) => {
   logging.error(error, `[Background Job] ${workerMeta.name} failed`);
   sentry.captureException(error);
 };
 const events = require('../../lib/common/events');
-const workerModelEventBridge = new WorkerModelEventBridge({ models, events, logging, sentry });
 
 const workerMessageHandler = ({ name, message }) => {
-  if (workerModelEventBridge.isModelEventMessage(message)) {
-    // Carries its own `eventName` rather than job-manager's reserved `event` key,
-    // so it routes through the bridge instead of being dispatched as a raw domain event.
-    workerModelEventBridge.handle(message, { jobName: name });
-    return;
-  }
-
   if (typeof message === 'string' && !['done', 'cancelled'].includes(message)) {
     logging.info(`[Background Job] ${name}: ${message}`);
   }
-};
-
-const initTestMode = () => {
-  // Output job queue length every 5 seconds
-  setInterval(() => {
-    logging.warn(
-      `${jobManager.inlineQueue.length()} jobs in the queue. Idle: ${jobManager.inlineQueue.idle()}`,
-    );
-
-    const runningScheduledjobs = Object.keys(jobManager.bree.workers);
-    if (Object.keys(jobManager.bree.workers).length) {
-      logging.warn(
-        `${Object.keys(jobManager.bree.workers).length} jobs running: ${runningScheduledjobs}`,
-      );
-    }
-
-    const scheduledJobs = Object.keys(jobManager.bree.intervals);
-    if (Object.keys(jobManager.bree.intervals).length) {
-      logging.warn(
-        `${Object.keys(jobManager.bree.intervals).length} scheduled jobs: ${scheduledJobs}`,
-      );
-    }
-
-    if (runningScheduledjobs.length === 0 && scheduledJobs.length === 0) {
-      logging.warn('No scheduled or running jobs');
-    }
-  }, 5000);
 };
 
 const jobManager = new JobManager({
@@ -67,4 +31,3 @@ const jobManager = new JobManager({
 });
 
 module.exports = jobManager;
-module.exports.initTestMode = initTestMode;

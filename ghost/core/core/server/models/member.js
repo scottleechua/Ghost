@@ -2,13 +2,12 @@ const ghostBookshelf = require('./base');
 const crypto = require('crypto');
 const _ = require('lodash');
 const { chainTransformers } = require('@tryghost/mongo-utils');
-const config = require('../../shared/config');
-const labs = require('../../shared/labs');
+const { memberAvatarImage } = require('../services/members/member-avatar');
 const { MemberCommentingCodec } = require('../services/members/commenting');
 const {
-  CUSTOM_FIELDS_RELATION,
-  createCustomFieldsFilterTransformer,
-} = require('../services/members-custom-fields/filter');
+  METAFIELDS_RELATION,
+  createMetafieldsFilterTransformer,
+} = require('../services/members-metafields/filter');
 
 const DEEP_OFFSET_THRESHOLD = 1000;
 
@@ -191,19 +190,13 @@ const Member = ghostBookshelf.Model.extend(
       ];
     },
 
-    // Chain the custom-field filter transformer at this single choke point — the method
-    // every members query routes its filter through (list, CSV export, bulk edit/destroy,
-    // count, email send all reach it via findPage or getFilteredCollectionQuery) — so a
-    // saved `custom_fields.*` segment works the same everywhere without each call site
-    // wiring it. Runs only behind the flag and only when the filter names the relation; the
-    // transformer maps the public `key`/`value` grammar onto the leaf-row columns.
+    // Every members query routes its filter through this one method: list, CSV export, bulk
+    // edit and delete, counts and email sends all reach it via findPage or
+    // getFilteredCollectionQuery. Chaining the metafield filter transformer here covers them
+    // all without any call site wiring it.
     applyDefaultAndCustomFilters(options) {
-      if (
-        labs.isSet('membersCustomFields') &&
-        options.filter &&
-        options.filter.includes(`${CUSTOM_FIELDS_RELATION.tableNameAs}.`)
-      ) {
-        const transformer = createCustomFieldsFilterTransformer();
+      if (options.filter && options.filter.includes(`${METAFIELDS_RELATION.tableNameAs}.`)) {
+        const transformer = createMetafieldsFilterTransformer();
         options.mongoTransformer = options.mongoTransformer
           ? chainTransformers(options.mongoTransformer, transformer)
           : transformer;
@@ -213,11 +206,7 @@ const Member = ghostBookshelf.Model.extend(
 
     filterRelations() {
       return {
-        // Custom field values are filterable only behind the feature flag. Gating the
-        // relation here (rather than the whole model) means a `custom_fields.*` filter
-        // is simply an unknown relation when the flag is off, and the filter is
-        // rejected — nothing to special-case downstream.
-        ...(labs.isSet('membersCustomFields') ? { custom_fields: CUSTOM_FIELDS_RELATION } : {}),
+        metafields: METAFIELDS_RELATION,
         labels: {
           tableName: 'labels',
           type: 'manyToMany',
@@ -599,7 +588,10 @@ const Member = ghostBookshelf.Model.extend(
      * has no access to the nested relations, which should be updated.
      */
     permittedAttributes: function permittedAttributes() {
-      let filteredKeys = ghostBookshelf.Model.prototype.permittedAttributes.apply(this, arguments);
+      const filteredKeys = ghostBookshelf.Model.prototype.permittedAttributes.apply(
+        this,
+        arguments,
+      );
 
       this.relationships.forEach((key) => {
         filteredKeys.push(key);
@@ -643,14 +635,8 @@ const Member = ghostBookshelf.Model.extend(
     toJSON(unfilteredOptions) {
       const attrs = ghostBookshelf.Model.prototype.toJSON.call(this, unfilteredOptions);
 
-      // Inject a computed avatar url. Uses gravatar's default ?d= query param
-      // to serve a blank image if there is no gravatar for the member's email.
-      // Will not use gravatar if privacy.useGravatar is false in config
-      attrs.avatar_image = null;
-      if (attrs.email && !config.isPrivacyDisabled('useGravatar')) {
-        const { gravatar } = require('../lib/image');
-        attrs.avatar_image = gravatar.url(attrs.email, { size: 250, default: 'blank' });
-      }
+      // Inject a computed avatar url, by the rule every place that shows a member shares.
+      attrs.avatar_image = memberAvatarImage(attrs.email);
 
       // Serialize commenting domain object to API format
       if (attrs.commenting) {

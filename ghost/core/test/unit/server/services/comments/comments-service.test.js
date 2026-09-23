@@ -225,7 +225,7 @@ describe('Comments Service: CommentsService', function () {
         commentFetchModels[0].fetch,
         sinon.match({
           transacting: 'transaction',
-          columns: ['id'],
+          columns: ['id', 'post_id'],
         }),
       );
     });
@@ -351,6 +351,46 @@ describe('Comments Service: CommentsService', function () {
         sinon.assert.calledOnce(vote.destroy);
       });
     });
+  });
+
+  describe('comment votes without post access', function () {
+    function createBlockedInstance() {
+      const setup = createClassInstance();
+      setup.instance.contentGating.checkPostAccess.returns('block');
+      return setup;
+    }
+
+    for (const action of ['likeComment', 'dislikeComment']) {
+      it(`rejects ${action} before changing votes`, async function () {
+        const { instance, models, commentLikeCollection } = createBlockedInstance();
+        const vote = voteModel({ id: 'vote-id', score: action === 'likeComment' ? -1 : 1 });
+        commentLikeCollection.fetchAll.resolves({ models: [vote] });
+
+        await assert.rejects(
+          () => instance[action]('comment-id', { id: 'member-id' }),
+          errors.NoPermissionError,
+        );
+
+        sinon.assert.calledWith(models.Post.findOne, { id: 'post-id' });
+        sinon.assert.notCalled(vote.destroy);
+        sinon.assert.notCalled(models.CommentLike.add);
+      });
+    }
+
+    for (const [action, score] of [
+      ['unlikeComment', 1],
+      ['undislikeComment', -1],
+    ]) {
+      it(`allows ${action} so members can remove their own votes`, async function () {
+        const { instance, commentLikeCollection } = createBlockedInstance();
+        const vote = voteModel({ id: 'vote-id', score });
+        commentLikeCollection.fetchAll.resolves({ models: [vote] });
+
+        await instance[action]('comment-id', { id: 'member-id' });
+
+        sinon.assert.calledOnce(vote.destroy);
+      });
+    }
   });
 
   describe('comment votes on non-public comments', function () {

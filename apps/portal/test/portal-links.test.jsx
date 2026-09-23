@@ -7,6 +7,7 @@ import {
 import { appRender, fireEvent, waitFor, within } from './utils/test-utils';
 import setupGhostApi from '../src/utils/api';
 import { toDateValue } from '../src/utils/date-time';
+import { GIFT_FORM_STATE_KEY, createGiftFormState } from '../src/components/pages/gift/form-state';
 
 const defaultGiftResponse = {
   gifts: [
@@ -98,6 +99,7 @@ const setup = async ({
 
 describe('Portal Data links:', () => {
   beforeEach(() => {
+    window.sessionStorage.clear();
     // Mock global fetch
     vi.spyOn(window, 'fetch').mockImplementation((url) => {
       if (url.includes('send-magic-link')) {
@@ -140,7 +142,7 @@ describe('Portal Data links:', () => {
     });
 
     // Mock window.location
-    let locationMock = vi.fn();
+    const locationMock = vi.fn();
     delete window.location;
     window.location = { assign: locationMock };
     window.location.href = new URL('https://portal.localhost').href;
@@ -197,7 +199,7 @@ describe('Portal Data links:', () => {
       describe('with only a free plan', () => {
         test('renders invite-only message and does not allow signups', async () => {
           window.location.hash = '#/portal/signup';
-          let { popupFrame } = await setup({
+          const { popupFrame } = await setup({
             site: { ...FixtureSite.singleTier.onlyFreePlan, members_signup_access: 'paid' },
             member: null,
           });
@@ -216,7 +218,7 @@ describe('Portal Data links:', () => {
           window.location.hash = '#/portal/signup';
 
           // Set up a paid-members only site with a free tier + 3 paid tiers
-          let { popupFrame } = await setup({
+          const { popupFrame } = await setup({
             site: { ...FixtureSite.multipleTiers.basic, members_signup_access: 'paid' },
             member: null,
           });
@@ -260,7 +262,7 @@ describe('Portal Data links:', () => {
     test('does not open Portal when a paid member opens an offer link directly', async () => {
       window.location.hash = `#/portal/offers/${FixtureOffer.id}`;
 
-      let { ghostApi, popupFrame, triggerButtonFrame, ...utils } = await setup({
+      const { ghostApi, popupFrame, triggerButtonFrame, ...utils } = await setup({
         site: FixtureSite.singleTier.basic,
         member: FixtureMember.paid,
         showPopup: false,
@@ -329,7 +331,7 @@ describe('Portal Data links:', () => {
     describe('on a paid-members only site', () => {
       test('renders paid-members only message and does not allow signups', async () => {
         window.location.hash = '#/portal/signup/free';
-        let { popupFrame } = await setup({
+        const { popupFrame } = await setup({
           site: { ...FixtureSite.multipleTiers.basic, members_signup_access: 'paid' },
           member: null,
         });
@@ -455,7 +457,6 @@ describe('Portal Data links:', () => {
 
       const site = {
         ...FixtureSite.singleTier.basic,
-        labs: { giftSubCustomization: true },
         portal_signup_gift_promotion: false,
         portal_account_gift_promotion: false,
       };
@@ -467,10 +468,89 @@ describe('Portal Data links:', () => {
       ).toBeInTheDocument();
     });
 
+    test('opens a completed personalized gift at the delivery step', async () => {
+      const site = {
+        ...FixtureSite.singleTier.basic,
+      };
+      const productId = site.products.find((product) => product.type === 'paid').id;
+      const draft = createGiftFormState({ buyerName: 'Jamie' });
+      draft.plan.selectedDuration = 1;
+      draft.plan.selectedProductId = productId;
+      draft.plan.completed = true;
+      draft.delivery.emailDraft.recipientEmail = 'recipient@example.com';
+      draft.delivery.emailDraft.recipientName = 'Taylor';
+      draft.delivery.emailDraft.message = 'Enjoy!';
+      window.sessionStorage.setItem(GIFT_FORM_STATE_KEY, JSON.stringify(draft));
+      window.location.hash = '#/portal/gift/delivery';
+
+      let { popupFrame, ...utils } = await setup({ site, showPopup: false });
+      popupFrame = await utils.findByTitle(/portal-popup/i);
+      const popupDocument = popupFrame.contentDocument;
+
+      expect(within(popupDocument).getByLabelText("Recipient's email")).toHaveValue(
+        'recipient@example.com',
+      );
+      expect(within(popupDocument).getByLabelText("Recipient's name")).toHaveValue('Taylor');
+      expect(within(popupDocument).getByLabelText('Optional message')).toHaveValue('Enjoy!');
+    });
+
+    test('clears a personalized gift draft when Escape closes Portal', async () => {
+      window.location.hash = '#/portal/gift';
+      const site = {
+        ...FixtureSite.singleTier.basic,
+      };
+      let { popupFrame, ...utils } = await setup({ site, showPopup: false });
+      popupFrame = await utils.findByTitle(/portal-popup/i);
+      const popupDocument = popupFrame.contentDocument;
+      fireEvent.change(within(popupDocument).getByLabelText('Your name'), {
+        target: { value: 'Jamie' },
+      });
+      expect(window.sessionStorage.getItem(GIFT_FORM_STATE_KEY)).not.toBeNull();
+
+      fireEvent.keyUp(popupDocument.body, { key: 'Escape' });
+
+      await waitFor(() => expect(utils.queryByTitle(/portal-popup/i)).not.toBeInTheDocument());
+      expect(window.sessionStorage.getItem(GIFT_FORM_STATE_KEY)).toBeNull();
+    });
+
+    test('closes Portal when browser Back returns from Gift to a non-Portal fragment', async () => {
+      window.location.hash = '#/portal/gift';
+      const site = {
+        ...FixtureSite.singleTier.basic,
+      };
+      let { popupFrame, ...utils } = await setup({ site, showPopup: false });
+      popupFrame = await utils.findByTitle(/portal-popup/i);
+      expect(popupFrame).toBeInTheDocument();
+
+      window.location.hash = '#comments';
+      window.dispatchEvent(new HashChangeEvent('hashchange'));
+
+      await waitFor(() => expect(utils.queryByTitle(/portal-popup/i)).not.toBeInTheDocument());
+    });
+
+    test('clears a personalized gift draft when browser Back returns to another Portal page', async () => {
+      window.location.hash = '#/portal/gift';
+      const site = {
+        ...FixtureSite.singleTier.basic,
+      };
+      let { popupFrame, ...utils } = await setup({ site, showPopup: false });
+      popupFrame = await utils.findByTitle(/portal-popup/i);
+      const popup = within(popupFrame.contentDocument);
+
+      fireEvent.change(popup.getByLabelText('Your name'), { target: { value: 'Jamie' } });
+      expect(window.sessionStorage.getItem(GIFT_FORM_STATE_KEY)).not.toBeNull();
+
+      window.location.hash = '#/portal/signup';
+      window.dispatchEvent(new HashChangeEvent('hashchange'));
+
+      await waitFor(() => expect(popup.getByLabelText('Name')).toBeInTheDocument());
+      expect(window.sessionStorage.getItem(GIFT_FORM_STATE_KEY)).toBeNull();
+    });
+
     test('does not open when Stripe is disconnected', async () => {
       window.location.hash = '#/portal/gift';
 
-      let { popupFrame, triggerButtonFrame } = await setup({
+      const { popupFrame, triggerButtonFrame } = await setup({
         site: FixtureSite.singleTier.withoutStripe,
         showPopup: false,
       });
@@ -511,7 +591,7 @@ describe('Portal Data links:', () => {
     };
 
     test('renders a toast error when gift has expired', async () => {
-      let { ghostApi, triggerButtonFrame, ...utils } = await setupGiftRedemption({
+      const { ghostApi, triggerButtonFrame, ...utils } = await setupGiftRedemption({
         giftError: Object.assign(new Error('This gift has expired.'), { code: 'GIFT_EXPIRED' }),
       });
 
@@ -525,7 +605,7 @@ describe('Portal Data links:', () => {
     });
 
     test('renders a toast error when gift has already been redeemed', async () => {
-      let { ghostApi, triggerButtonFrame, ...utils } = await setupGiftRedemption({
+      const { ghostApi, triggerButtonFrame, ...utils } = await setupGiftRedemption({
         giftError: Object.assign(new Error('This gift has already been redeemed.'), {
           code: 'GIFT_REDEEMED',
         }),
@@ -541,7 +621,7 @@ describe('Portal Data links:', () => {
     });
 
     test('renders a toast error when logged-in member already has an active subscription', async () => {
-      let { ghostApi, triggerButtonFrame, ...utils } = await setupGiftRedemption({
+      const { ghostApi, triggerButtonFrame, ...utils } = await setupGiftRedemption({
         giftError: Object.assign(new Error('You already have an active subscription.'), {
           code: 'GIFT_PAID_MEMBER',
         }),
@@ -557,7 +637,7 @@ describe('Portal Data links:', () => {
     });
 
     test('renders a toast error when gift link is invalid', async () => {
-      let { ghostApi, triggerButtonFrame, ...utils } = await setupGiftRedemption({
+      const { ghostApi, triggerButtonFrame, ...utils } = await setupGiftRedemption({
         giftError: Object.assign(new Error('Gift not found'), { code: 'GIFT_NOT_FOUND' }),
       });
 
@@ -582,8 +662,8 @@ describe('Portal Data links:', () => {
       expect(
         await within(popupIframeDocument).findByText(/You've been gifted a membership/i),
       ).toBeInTheDocument();
-      expect(within(popupIframeDocument).queryByText(/Bronze/i)).toBeInTheDocument();
-      expect(within(popupIframeDocument).queryByText(/1 year/i)).toBeInTheDocument();
+      expect(within(popupIframeDocument).queryAllByText(/Bronze/i)).not.toHaveLength(0);
+      expect(within(popupIframeDocument).queryAllByText(/1 year/i)).not.toHaveLength(0);
       expect(
         within(popupIframeDocument).queryByText(/Five great stories to read every day/i),
       ).toBeInTheDocument();
@@ -618,13 +698,13 @@ describe('Portal Data links:', () => {
     test('opens gift success page for immediate email delivery', async () => {
       const site = {
         ...FixtureSite.singleTier.basic,
-        labs: { giftSubCustomization: true },
       };
       const tierId = site.products.find((product) => product.type === 'paid').id;
       window.location.href = `https://portal.localhost/?stripe=gift-purchase-success&gift_token=abc123&gift_tier=${tierId}&gift_cadence=year&gift_duration=12&gift_delivery=email`;
       window.location.search = `?stripe=gift-purchase-success&gift_token=abc123&gift_tier=${tierId}&gift_cadence=year&gift_duration=12&gift_delivery=email`;
       window.location.hash = '';
       window.location.pathname = '/';
+      window.sessionStorage.setItem(GIFT_FORM_STATE_KEY, 'saved-draft');
 
       let { popupFrame, triggerButtonFrame, ...utils } = await setup({
         site,
@@ -644,12 +724,12 @@ describe('Portal Data links:', () => {
 
       const duration = within(popupFrame.contentDocument).queryByText('1 year');
       expect(duration).toBeInTheDocument();
+      expect(window.sessionStorage.getItem(GIFT_FORM_STATE_KEY)).toBeNull();
     });
 
     test('opens gift success page with scheduled delivery wording for a future date', async () => {
       const site = {
         ...FixtureSite.singleTier.basic,
-        labs: { giftSubCustomization: true },
       };
       const tierId = site.products.find((product) => product.type === 'paid').id;
       const futureDate = new Date();
@@ -696,14 +776,16 @@ describe('Portal Data links:', () => {
       window.location.search = '?stripe=gift-purchase-success';
       window.location.hash = '';
       window.location.pathname = '/';
+      window.sessionStorage.setItem(GIFT_FORM_STATE_KEY, 'saved-draft');
 
-      let { popupFrame, triggerButtonFrame } = await setup({
+      const { popupFrame, triggerButtonFrame } = await setup({
         site: FixtureSite.singleTier.basic,
         showPopup: false,
       });
 
       expect(triggerButtonFrame).toBeInTheDocument();
       expect(popupFrame).not.toBeInTheDocument();
+      expect(window.sessionStorage.getItem(GIFT_FORM_STATE_KEY)).toBe('saved-draft');
     });
   });
 

@@ -2,7 +2,7 @@ const tpl = require('@tryghost/tpl');
 const mailService = require('../../services/mail');
 const api = require('./');
 let mailer;
-let _private = {};
+const _private = {};
 
 const messages = {
   unableToSendEmail: 'Ghost is currently unable to send email.',
@@ -25,7 +25,7 @@ _private.sendMail = (object) => {
               message: [
                 tpl(messages.unableToSendEmail),
                 tpl(messages.seeLinkForInstructions, {
-                  link: 'https://ghost.org/docs/concepts/config/#mail',
+                  link: 'https://docs.ghost.org/concepts/config/#mail',
                 }),
               ].join(' '),
             },

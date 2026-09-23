@@ -57,7 +57,7 @@ module.exports = class MemberController {
       });
     }
 
-    let tokenData = {};
+    const tokenData = {};
     try {
       const member = await this._memberRepository.getByToken(identity);
       tokenData.oldEmail = member.get('email');
@@ -88,7 +88,7 @@ module.exports = class MemberController {
       const cancelAtPeriodEnd = req.body.cancel_at_period_end;
       const smartCancel = req.body.smart_cancel;
       const cancellationReason = req.body.cancellation_reason;
-      let ghostPriceId = req.body.priceId;
+      const ghostPriceId = req.body.priceId;
       const tierId = req.body.tierId;
       const cadence = req.body.cadence;
 
@@ -146,6 +146,17 @@ module.exports = class MemberController {
 
       if (tierId && cadence) {
         const tier = await this._tiersService.api.read(tierId);
+
+        if (!tier) {
+          res.writeHead(404);
+          return res.end('Not Found.');
+        }
+
+        if (tier.status !== 'active') {
+          res.writeHead(403);
+          return res.end('Tier is archived.');
+        }
+
         const stripePrice = await this._paymentsService.getPriceForTierCadence(tier, cadence);
 
         await this._memberRepository.updateSubscription({

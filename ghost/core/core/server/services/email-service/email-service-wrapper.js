@@ -1,5 +1,5 @@
+const assert = require('node:assert/strict');
 const debug = require('@tryghost/debug')('i18n');
-const logging = require('@tryghost/logging');
 const url = require('../../api/endpoints/utils/serializers/output/utils/url');
 const events = require('../../lib/common/events');
 
@@ -15,16 +15,18 @@ class EmailServiceWrapper {
     return jsonModel.url;
   }
 
-  init({ ghostServer } = {}) {
+  init({ ghostServer, jobsService } = {}) {
     if (this.service) {
       return;
     }
+    assert(jobsService, 'Email service requires the jobs service');
 
     const EmailService = require('./email-service');
     const EmailController = require('./email-controller');
     const EmailRenderer = require('./email-renderer');
     const SendingService = require('./sending-service');
     const BatchSendingService = require('./batch-sending-service');
+    const { SendingStatusService } = require('./sending-status-service');
     const EmailSegmenter = require('./email-segmenter');
     const MailgunEmailProvider = require('./mailgun-email-provider');
     const { DomainWarmingService } = require('./domain-warming-service');
@@ -36,7 +38,6 @@ class EmailServiceWrapper {
     const configService = require('../../../shared/config');
     const settingsCache = require('../../../shared/settings-cache');
     const settingsHelpers = require('../settings-helpers');
-    const jobsService = require('../jobs');
     const membersService = require('../members');
     const db = require('../../data/db');
     const sentry = require('../../../shared/sentry');
@@ -44,7 +45,7 @@ class EmailServiceWrapper {
     const limitService = require('../limits');
     const labs = require('../../../shared/labs');
     const emailAddressService = require('../email-address');
-    const i18nLib = require('@tryghost/i18n');
+    const i18nLib = require('@tryghost/i18n').default;
     const lexicalLib = require('../../lib/lexical');
     const urlUtils = require('../../../shared/url-utils').default;
     const memberAttribution = require('../member-attribution');
@@ -54,12 +55,6 @@ class EmailServiceWrapper {
     const storageUtils = require('../../adapters/storage/utils');
     const emailAnalyticsJobs = require('../email-analytics/jobs');
     const { cachedImageSizeFromUrl } = require('../../lib/image');
-
-    // capture errors from mailgun client and log them in sentry
-    const errorHandler = (error) => {
-      logging.info(`Capturing error for mailgun email provider service`);
-      sentry.captureException(error);
-    };
 
     // Mailgun client instance for email provider
     const mailgunClient = new MailgunClient({
@@ -78,7 +73,6 @@ class EmailServiceWrapper {
     const mailgunEmailProvider = new MailgunEmailProvider({
       mailgunClient,
       config: configService,
-      errorHandler,
     });
 
     const emailRenderer = new EmailRenderer({
@@ -134,8 +128,8 @@ class EmailServiceWrapper {
       db,
       sentry,
       getRequiredUrlRelations,
-      debugStorageFilePath: configService.getContentPath('data'),
     });
+    const sendingStatusService = new SendingStatusService({ knex: db.knex });
 
     if (ghostServer) {
       // Two phases: stop claiming batches immediately, drain in-flight ones later.
@@ -178,6 +172,7 @@ class EmailServiceWrapper {
         Email,
       },
       getRequiredUrlRelations,
+      sendingStatusService,
     });
   }
 }

@@ -19,10 +19,10 @@ function normalizeNotifications(response) {
   if (!response) {
     return [];
   }
-  if (_.isArray(response.notifications)) {
+  if (Array.isArray(response.notifications)) {
     return response.notifications;
   }
-  if (_.isArray(response)) {
+  if (Array.isArray(response)) {
     return response;
   }
   if (response.messages) {
@@ -99,7 +99,7 @@ class UpdateCheckService {
     );
 
     err.context = tpl(messages.checkingForUpdatesFailedError);
-    err.help = tpl(messages.checkingForUpdatesFailedHelp, { url: 'https://ghost.org/docs/' });
+    err.help = tpl(messages.checkingForUpdatesFailedHelp, { url: 'https://docs.ghost.org/' });
 
     this.logging.error(
       {
@@ -120,7 +120,7 @@ class UpdateCheckService {
    * Only the Ghost version is sent so the service can return the relevant
    * release and security notifications. No site data is collected.
    *
-   * @see https://ghost.org/docs/concepts/config/#privacy
+   * @see https://docs.ghost.org/concepts/config/#privacy
    * @returns {Promise}
    */
   async updateCheckRequest() {
@@ -230,7 +230,7 @@ class UpdateCheckService {
    * @return {Promise}
    */
   async updateCheckResponse(response) {
-    let notificationGroups = (this.config.notificationGroups || []).concat(['all']);
+    const notificationGroups = (this.config.notificationGroups || []).concat(['all']);
 
     debug('Notification Groups', notificationGroups);
     debug('Response Update Check Service', response);

@@ -12,6 +12,7 @@ const {
 } = require('@tryghost/mongo-utils');
 const { default: ObjectID } = require('bson-objectid');
 const db = require('../../../../data/db');
+const { memberAvatarImage } = require('../../member-avatar');
 
 /**
  * This mongo transformer ignores the provided filter option and replaces the filter with a custom filter that was provided to the transformer. Allowing us to set a mongo filter instead of a string based NQL filter.
@@ -34,16 +35,15 @@ module.exports = class EventRepository {
     MemberStatusEvent,
     MemberLoginEvent,
     MemberCreatedEvent,
-    SubscriptionCreatedEvent,
     MemberPaidSubscriptionEvent,
     MemberLinkClickEvent,
     MemberFeedback,
     EmailSpamComplaintEvent,
     Comment,
-    labsService,
     memberAttributionService,
     urlService,
     MemberEmailChangeEvent,
+    metafieldValues,
     AutomatedEmailRecipient,
     giftSubscriptions,
   }) {
@@ -55,15 +55,14 @@ module.exports = class EventRepository {
     this._MemberLoginEvent = MemberLoginEvent;
     this._EmailRecipient = EmailRecipient;
     this._Comment = Comment;
-    this._labsService = labsService;
     this._urlService = urlService;
     this._MemberCreatedEvent = MemberCreatedEvent;
-    this._SubscriptionCreatedEvent = SubscriptionCreatedEvent;
     this._MemberLinkClickEvent = MemberLinkClickEvent;
     this._MemberFeedback = MemberFeedback;
     this._EmailSpamComplaintEvent = EmailSpamComplaintEvent;
     this._memberAttributionService = memberAttributionService;
     this._MemberEmailChangeEvent = MemberEmailChangeEvent;
+    this._metafieldValues = metafieldValues;
     this._AutomatedEmailRecipient = AutomatedEmailRecipient;
     this._giftSubscriptions = giftSubscriptions;
     this._knex = db.knex;
@@ -103,6 +102,7 @@ module.exports = class EventRepository {
         { type: 'login_event', action: 'getLoginEvents' },
         { type: 'payment_event', action: 'getPaymentEvents' },
         { type: 'email_change_event', action: 'getEmailChangeEvent' },
+        { type: 'metafield_change_event', action: 'getMetafieldChangeEvents' },
         { type: 'gift_purchase_event', action: 'getGiftPurchaseEvents' },
         { type: 'gift_redemption_event', action: 'getGiftRedemptionEvents' },
         { type: 'gift_ended_event', action: 'getGiftEndedEvents' },
@@ -432,6 +432,8 @@ module.exports = class EventRepository {
       delete json.postAttribution?.mobiledoc;
       delete json.postAttribution?.lexical;
       delete json.postAttribution?.plaintext;
+      delete json.postAttribution?.auto_excerpt;
+      delete json.postAttribution?.reading_time;
       const createdWithStatus = json.signupStatusEvent?.to_status ?? null;
       delete json.signupStatusEvent;
       return {
@@ -492,6 +494,8 @@ module.exports = class EventRepository {
       delete json.postAttribution?.mobiledoc;
       delete json.postAttribution?.lexical;
       delete json.postAttribution?.plaintext;
+      delete json.postAttribution?.auto_excerpt;
+      delete json.postAttribution?.reading_time;
       return {
         type: 'donation_event',
         data: {
@@ -652,7 +656,7 @@ module.exports = class EventRepository {
 
     filter = this.removePostIdFilter(otherFilter); //Remove post_id filter as we don't need it in the query
 
-    let postClicksQuery = postId
+    const postClicksQuery = postId
       ? `SELECT
                     mce.id,
                     mce.member_id,
@@ -1009,6 +1013,37 @@ module.exports = class EventRepository {
     return {
       data,
       meta,
+    };
+  }
+
+  async getMetafieldChangeEvents(options = {}, filter) {
+    // The entries belong to the metafields domain, which reads them without a model; the
+    // feed maps its own filter names onto the table's columns and adds each member's avatar.
+    const columnFilter = filter
+      ? chainTransformers(
+          ...mapKeys({
+            'data.created_at': 'created_at',
+            'data.member_id': 'member_id',
+          }),
+        )(filter)
+      : undefined;
+
+    const { events, total } = await this._metafieldValues.browseChangeEvents({
+      // The feed's limit arrives as the request sent it, which can be a numeric string
+      // or `all`; the service takes a number, or nothing for every entry.
+      limit: options.limit === 'all' ? undefined : Number(options.limit),
+      filter: columnFilter,
+    });
+
+    return {
+      data: events.map((event) => ({
+        type: 'metafield_change_event',
+        data: {
+          ...event,
+          member: { ...event.member, avatar_image: memberAvatarImage(event.member.email) },
+        },
+      })),
+      meta: { pagination: { total } },
     };
   }
 

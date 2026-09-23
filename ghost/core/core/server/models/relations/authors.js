@@ -139,7 +139,7 @@ module.exports.extendModel = function extendModel(Post, Posts, ghostBookshelf) {
       },
 
       serialize: function serialize(options) {
-        let attrs = proto.serialize.call(this, options);
+        const attrs = proto.serialize.call(this, options);
 
         // CASE: e.g. you stub model response in the test
         // CASE: you delete a model without fetching before
@@ -149,7 +149,6 @@ module.exports.extendModel = function extendModel(Post, Posts, ghostBookshelf) {
 
         // CASE: `posts.authors` was not requested, but fetched in specific cases (see top)
         if (
-          !this._originalOptions ||
           !this._originalOptions.withRelated ||
           this._originalOptions.withRelated.indexOf('authors') === -1
         ) {
@@ -157,10 +156,7 @@ module.exports.extendModel = function extendModel(Post, Posts, ghostBookshelf) {
         }
 
         // If the current column settings allow it...
-        if (
-          !options.columns ||
-          (options.columns && options.columns.indexOf('primary_author') > -1)
-        ) {
+        if (!options.columns || options.columns.indexOf('primary_author') > -1) {
           // ... attach a computed property of primary_author which is the first author
           if (attrs.authors && attrs.authors.length) {
             attrs.primary_author = attrs.authors[0];
@@ -213,7 +209,7 @@ module.exports.extendModel = function extendModel(Post, Posts, ghostBookshelf) {
                 .where(query)
                 .fetch(Object.assign({ columns: ['id'] }, _.pick(options, 'transacting')))
                 .then((user) => {
-                  let userId = user ? user.id : ownerUser.id;
+                  const userId = user ? user.id : ownerUser.id;
 
                   // CASE: avoid attaching duplicate authors relation
                   const userExists = _.find(authorsToSet, { id: userId.id });
@@ -247,10 +243,10 @@ module.exports.extendModel = function extendModel(Post, Posts, ghostBookshelf) {
        * @param {Object} unfilteredOptions.transacting
        */
       reassignByAuthor: async function reassignByAuthor(unfilteredOptions) {
-        let options = this.filterOptions(unfilteredOptions, 'reassignByAuthor', {
+        const options = this.filterOptions(unfilteredOptions, 'reassignByAuthor', {
           extraAllowedProperties: ['id'],
         });
-        let authorId = options.id;
+        const authorId = options.id;
 
         if (!authorId) {
           return Promise.reject(
@@ -261,8 +257,8 @@ module.exports.extendModel = function extendModel(Post, Posts, ghostBookshelf) {
         }
 
         const reassignPost = async () => {
-          let trx = options.transacting;
-          let knex = ghostBookshelf.knex;
+          const trx = options.transacting;
+          const knex = ghostBookshelf.knex;
 
           try {
             // There's only one possible owner per Ghost instance
@@ -354,9 +350,6 @@ module.exports.extendModel = function extendModel(Post, Posts, ghostBookshelf) {
         const postModel = postModelOrId;
         let origArgs;
         const { isContributor, isAuthor } = setIsRoles(loadedPermissions);
-        let isEdit;
-        let isAdd;
-        let isDestroy;
 
         // If we passed in an id instead of a model, get the model
         // then check the permissions
@@ -381,9 +374,9 @@ module.exports.extendModel = function extendModel(Post, Posts, ghostBookshelf) {
           });
         }
 
-        isEdit = action === 'edit';
-        isAdd = action === 'add';
-        isDestroy = action === 'destroy';
+        const isEdit = action === 'edit';
+        const isAdd = action === 'add';
+        const isDestroy = action === 'destroy';
 
         function isChangingAuthors() {
           if (!unsafeAttrs.authors) {
@@ -398,20 +391,10 @@ module.exports.extendModel = function extendModel(Post, Posts, ghostBookshelf) {
         }
 
         function isOwner() {
-          let isCorrectOwner = true;
-
           if (!unsafeAttrs.authors) {
             return false;
           }
-
-          if (unsafeAttrs.authors) {
-            isCorrectOwner =
-              isCorrectOwner &&
-              unsafeAttrs.authors.length &&
-              unsafeAttrs.authors[0].id === context.user;
-          }
-
-          return isCorrectOwner;
+          return unsafeAttrs.authors.length && unsafeAttrs.authors[0].id === context.user;
         }
 
         function isPrimaryAuthor() {

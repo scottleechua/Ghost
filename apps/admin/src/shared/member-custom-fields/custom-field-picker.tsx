@@ -240,8 +240,15 @@ function CreateFieldInline({
     }
 
     try {
-      const response = await createField({ name: name.trim(), type: typeId });
-      const field = response.members_custom_fields?.[0];
+      // The ordinary closed default. This picker only renders where the setting for
+      // opening a field to members is also available, so a publisher who wants members
+      // to fill this in can say so; nothing here has to guess on their behalf.
+      const response = await createField({
+        name: name.trim(),
+        type: typeId,
+        access: { member: 'none' },
+      });
+      const field = response.members_metafields?.[0];
       if (!field) {
         setSaveError('The field was created but could not be selected. Choose it from the list.');
         setCanRetry(false);

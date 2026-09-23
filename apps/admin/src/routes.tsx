@@ -18,8 +18,10 @@ import MyProfileRedirect from './my-profile-redirect';
 import { EmberFallback, ForceUpgradeGuard } from './ember-bridge';
 import HomeRedirect from './home-redirect';
 import { EmberListWithGiftLinks } from './gift-link-modal-host';
+import { EditorGate } from './editor-gate';
 import { PagesListGate, PostsListGate } from './posts-list-gate';
 import { TagDetailGate } from './tag-detail-gate';
+import { MemberActivityGate } from './member-activity-gate';
 import { useFlagGatedRouteOwner } from './use-flag-gated-route-owner';
 import { type AccessRouteHandle } from './route-access';
 import { RouteAccessGuard } from './route-access-guard';
@@ -50,35 +52,15 @@ const EMBER_ROUTES: string[] = [
   '/pro/*',
   '/posts/analytics/:postId/debug',
   '/restore',
-  '/editor/*',
   '/migrate/*',
-  '/members-activity',
 ];
 
 const emberFallbackHandle = { allowInForceUpgrade: true } satisfies AdminRouteHandle;
 
-/**
- * Ember routes that hide the nav sidebar.
- *
- * The editor is a focused writing surface and has always hidden it. Ember
- * arranges that by setting `ui.isFullScreen` when the editor route *activates* —
- * but with `postsListReact` on, the posts route aborts its transition, so the
- * editor route never deactivates, and a second visit is a model change on an
- * already-active route where `activate()` does not run again. The sidebar came
- * back from the second post onwards.
- *
- * Deciding it from the route makes React the authority and removes the
- * cross-implementation handshake, which had already caused the mirror-image bug
- * (the sidebar going *missing* on returning from the editor).
- */
-const EMBER_ROUTES_HIDING_SIDEBAR = new Set(['/editor/*']);
-
 const emberFallbackRoutes: RouteObject[] = EMBER_ROUTES.map((path) => ({
   path,
   Component: EmberFallback,
-  handle: EMBER_ROUTES_HIDING_SIDEBAR.has(path)
-    ? ({ ...emberFallbackHandle, hideAdminSidebar: true } satisfies AdminRouteHandle)
-    : emberFallbackHandle,
+  handle: emberFallbackHandle,
 }));
 
 const appRoutes: RouteObject[] = [
@@ -134,6 +116,14 @@ const appRoutes: RouteObject[] = [
     path: '/members',
     handle: { requiresAccess: canManageMembers } satisfies AccessRouteHandle,
     children: membersRouteChildren,
+  },
+  {
+    path: '/members-activity',
+    Component: MemberActivityGate,
+    handle: {
+      ...emberFallbackHandle,
+      requiresAccess: canManageMembers,
+    } satisfies AccessRouteHandle & AdminRouteHandle,
   },
   {
     path: '/posts/analytics/:postId',
@@ -194,6 +184,22 @@ const appRoutes: RouteObject[] = [
   // on both sides of the flag.
   { path: '/posts', Component: PostsListGate, handle: emberFallbackHandle },
   { path: '/pages', Component: PagesListGate, handle: emberFallbackHandle },
+  {
+    // Served by React or Ember depending on the `editorReact` Labs flag.
+    //
+    // The editor is a focused writing surface and has always hidden the nav
+    // sidebar. Ember arranges that by setting `ui.isFullScreen` when the
+    // editor route *activates* — but with `postsListReact` on, the posts
+    // route aborts its transition, so the editor route never deactivates,
+    // and a second visit is a model change on an already-active route where
+    // `activate()` does not run again. The sidebar came back from the second
+    // post onwards. Deciding it from the route handle makes React the
+    // authority, removes the cross-implementation handshake, and applies to
+    // both sides of the flag.
+    path: '/editor/*',
+    Component: EditorGate,
+    handle: { ...emberFallbackHandle, hideAdminSidebar: true } satisfies AdminRouteHandle,
+  },
   // Ember-handled routes
   ...emberFallbackRoutes,
   {
@@ -228,6 +234,8 @@ const EMBER_ROUTE_COMPONENTS = new Set<unknown>([EmberFallback, EmberListWithGif
 export function useIsEmberOwnedRoute(pathname: string): boolean {
   const tagDetailOwner = useFlagGatedRouteOwner('tagDetailsReact');
   const postsListOwner = useFlagGatedRouteOwner('postsListReact');
+  const editorOwner = useFlagGatedRouteOwner('editorReact');
+  const memberActivityOwner = useFlagGatedRouteOwner('membersActivityReact');
   const leaf = matchRoutes(routes, pathname)?.at(-1)?.route;
   if (!leaf) {
     return true;
@@ -237,6 +245,12 @@ export function useIsEmberOwnedRoute(pathname: string): boolean {
   }
   if (leaf.Component === PostsListGate || leaf.Component === PagesListGate) {
     return postsListOwner !== 'react';
+  }
+  if (leaf.Component === EditorGate) {
+    return editorOwner !== 'react';
+  }
+  if (leaf.Component === MemberActivityGate) {
+    return memberActivityOwner !== 'react';
   }
   return EMBER_ROUTE_COMPONENTS.has(leaf.Component);
 }

@@ -13,7 +13,7 @@ function isUnsplashImage(url) {
 }
 const { DateTime } = require('luxon');
 const htmlToPlaintext = require('@tryghost/html-to-plaintext');
-const EmailAddressParser = require('../email-address/email-address-parser');
+const emailAddressParser = require('../email-address/email-address-parser');
 const { getEmailDesign } = require('../email-rendering/email-design');
 const { registerHelpers } = require('./helpers/register-helpers');
 const crypto = require('crypto');
@@ -63,6 +63,19 @@ function escapeHtml(unsafe) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#039;');
+}
+
+/**
+ * @param {string} html
+ * @returns {string}
+ */
+function fixOutlookChars(html) {
+  return html
+    .replace(/&apos;/g, '&#39;')
+    .replace(/→/g, '&rarr;')
+    .replace(/–/g, '&ndash;')
+    .replace(/“/g, '&ldquo;')
+    .replace(/”/g, '&rdquo;');
 }
 
 /**
@@ -192,7 +205,7 @@ function escapeRegExp(string) {
  * @return {ReturnType<typeof cheerio.load>}
  */
 function cheerioLoad(html) {
-  const cheerio = require('cheerio');
+  const cheerio = require('cheerio/slim');
   return cheerio.load(html);
 }
 
@@ -229,6 +242,8 @@ function cheerioLoad(html) {
  * @prop {string} id
  * @prop {RegExp} token
  * @prop {(member: MemberLike) => string} getValue
+ * @prop {boolean} [trusted] - Value is server-generated, so it is inserted into the
+ *   html body as-is instead of being HTML-escaped. Defaults to false (escaped).
  */
 
 /**
@@ -337,7 +352,7 @@ class EmailRenderer {
   }
 
   #getRawFromAddress(post, newsletter) {
-    // Pass the raw name through; EmailAddressParser.stringify() is the single
+    // Pass the raw name through; emailAddressParser.stringify() is the single
     // point that escapes it for the RFC5322 quoted-string From header. Escaping
     // here too would double-escape (e.g. a title containing a double quote).
     let senderName = this.#settingsCache.get('title') || '';
@@ -394,7 +409,7 @@ class EmailRenderer {
       { useFallbackAddress },
     );
 
-    return EmailAddressParser.stringify(addresses.from);
+    return emailAddressParser.stringify(addresses.from);
   }
 
   /**
@@ -423,7 +438,7 @@ class EmailRenderer {
     );
 
     if (addresses.replyTo) {
-      return EmailAddressParser.stringify(addresses.replyTo);
+      return emailAddressParser.stringify(addresses.replyTo);
     }
     return null;
   }
@@ -707,7 +722,12 @@ class EmailRenderer {
 
     // Juice HTML (inline CSS)
     const juice = require('juice');
-    html = juice(html, { inlinePseudoElements: true, removeStyleTags: true });
+    // resolveCSSVariables crashes on nameless declarations in user-authored style attributes
+    html = juice(html, {
+      inlinePseudoElements: true,
+      removeStyleTags: true,
+      resolveCSSVariables: false,
+    });
 
     // happens after inlining of CSS so we can change element types without worrying about styling
     $ = cheerioLoad(html);
@@ -747,23 +767,52 @@ class EmailRenderer {
     // Convert DOM back to HTML
     html = $.html(); // () Fix for vscode syntax highlighter
 
+    // Personalize the entire name row after CSS inlining so an absent name also
+    // removes its label and markup, including in clients that discard stylesheets.
+    const nameRow = $('.subscription-details .subscription-name');
+    const nameHtml = nameRow.length ? $.html(nameRow) : '';
+    const nameText = nameRow.text();
+    const plaintextHtml = nameHtml
+      ? html.replace(nameHtml, '<p>%%{subscription_name_text}%%</p>')
+      : html;
+    if (nameHtml) {
+      html = html.replace(nameHtml, '%%{subscription_name_html}%%');
+    }
+
     // Replacement strings
     const replacementDefinitions = this.buildReplacementDefinitions({
       html,
       newsletterUuid: newsletter.get('uuid'),
     });
 
+    if (nameHtml) {
+      const outlookNameHtml = fixOutlookChars(nameHtml);
+      replacementDefinitions.push(
+        {
+          id: 'subscription_name_html',
+          token: /%%\{subscription_name_html\}%%/g,
+          getValue: (member) =>
+            member.name?.trim()
+              ? outlookNameHtml.replace('%%{name}%%', () => escapeHtml(member.name))
+              : '',
+          trusted: true, // Member name is already HTML-escaped
+        },
+        {
+          id: 'subscription_name_text',
+          token: /%%\{subscription_name_text\}%%/g,
+          getValue: (member) =>
+            member.name?.trim() ? nameText.replace('%%{name}%%', () => member.name) : '',
+        },
+      );
+    }
+
     // TODO: normalizeReplacementStrings (replace unsupported replacement strings)
 
     // Convert HTML to plaintext
-    const plaintext = htmlToPlaintext.email(html);
+    const plaintext = htmlToPlaintext.email(plaintextHtml);
 
     // Fix any unsupported chars in Outlook
-    html = html.replace(/&apos;/g, '&#39;');
-    html = html.replace(/→/g, '&rarr;');
-    html = html.replace(/–/g, '&ndash;');
-    html = html.replace(/“/g, '&ldquo;');
-    html = html.replace(/”/g, '&rdquo;');
+    html = fixOutlookChars(html);
 
     return {
       html,
@@ -806,7 +855,7 @@ class EmailRenderer {
   isMemberTrialing(member) {
     // Do we have an active subscription?
     if (member.status === 'paid') {
-      let activeSubscription = member.subscriptions.find((subscription) => {
+      const activeSubscription = member.subscriptions.find((subscription) => {
         return subscription.status === 'trialing';
       });
 
@@ -920,18 +969,21 @@ class EmailRenderer {
         getValue: (member) => {
           return this.createUnsubscribeUrl(member.uuid, { newsletterUuid });
         },
+        trusted: true, // Server-generated URL, must not be HTML-escaped
       },
       {
         id: 'manage_account_url',
         getValue: () => {
           return this.createManageAccountUrl();
         },
+        trusted: true, // Server-generated URL, must not be HTML-escaped
       },
       {
         id: 'uuid',
         getValue: (member) => {
           return member.uuid;
         },
+        trusted: true, // Server-generated identifier
       },
       {
         id: 'key',
@@ -941,6 +993,7 @@ class EmailRenderer {
             .update(member.uuid)
             .digest('hex');
         },
+        trusted: true, // Server-generated hmac
       },
       {
         id: 'first_name',
@@ -952,12 +1005,6 @@ class EmailRenderer {
         id: 'name',
         getValue: (member) => {
           return member.name;
-        },
-      },
-      {
-        id: 'name_class',
-        getValue: (member) => {
-          return member.name ? '' : 'hidden';
         },
       },
       {
@@ -1000,6 +1047,7 @@ class EmailRenderer {
           return this.createUnsubscribeUrl(member.uuid, { newsletterUuid });
         },
         required: true, // Used in email headers
+        trusted: true, // Server-generated URL, must not be HTML-escaped
       },
       // Unique ID used for ad images to bypass ESP image proxies
       {
@@ -1007,6 +1055,7 @@ class EmailRenderer {
         getValue: () => {
           return crypto.randomUUID();
         },
+        trusted: true, // Server-generated identifier
       },
     ];
 
@@ -1043,6 +1092,7 @@ class EmailRenderer {
             getValue: fallback
               ? (member) => definition.getValue(member) || fallback
               : definition.getValue,
+            trusted: definition.trusted === true,
           });
         }
       }
@@ -1056,6 +1106,7 @@ class EmailRenderer {
           originalId: definition.id,
           token: new RegExp(`%%\\{${definition.id}\\}%%`, 'g'),
           getValue: definition.getValue,
+          trusted: definition.trusted === true,
         });
       }
     }
@@ -1168,7 +1219,7 @@ class EmailRenderer {
    */
   #getEmailPreheader(postModel, audience, html) {
     let plaintext = postModel.get('plaintext');
-    let customExcerpt = postModel.get('custom_excerpt');
+    const customExcerpt = postModel.get('custom_excerpt');
     if (customExcerpt) {
       return customExcerpt;
     } else {

@@ -52,7 +52,7 @@ describe('Importer', function () {
     });
 
     it('cares about invalid dates and date formats', function () {
-      let exportData = exportedBodyV2().db[0];
+      const exportData = exportedBodyV2().db[0];
 
       exportData.data.posts[0] = testUtils.DataGenerator.forKnex.createPost({
         created_at: '00-00-0000 00:00:00',
@@ -100,7 +100,7 @@ describe('Importer', function () {
         );
         assert.equal(moment(importResult.data.tags[0].updated_at).format(), '2016-07-17T12:02:54Z');
 
-        // Ensure sqlite3 & mysql import of dates works as expected
+        // Ensure imported dates are normalized as expected.
         assert.equal(moment(importResult.data.posts[1].created_at).valueOf(), 1388318310000);
         assert.equal(moment(importResult.data.posts[1].updated_at).valueOf(), 1388318310000);
         assert.equal(moment(importResult.data.posts[1].published_at).valueOf(), 1388404710000);
@@ -108,7 +108,7 @@ describe('Importer', function () {
     });
 
     it('warning that theme was not imported', function () {
-      let exportData = exportedBodyV2().db[0];
+      const exportData = exportedBodyV2().db[0];
 
       exportData.data.settings[0] = testUtils.DataGenerator.forKnex.createSetting({
         key: 'active_theme',
@@ -134,7 +134,7 @@ describe('Importer', function () {
     });
 
     it('removes duplicate users', function () {
-      let exportData = exportedBodyV2().db[0];
+      const exportData = exportedBodyV2().db[0];
 
       exportData.data.users[0] = testUtils.DataGenerator.forKnex.createUser({
         name: 'Joe Bloggs',
@@ -158,7 +158,7 @@ describe('Importer', function () {
     });
 
     it('removes duplicate posts', function () {
-      let exportData = exportedBodyV2().db[0];
+      const exportData = exportedBodyV2().db[0];
 
       exportData.data.posts[0] = testUtils.DataGenerator.forKnex.createPost({
         slug: 'same',
@@ -182,7 +182,7 @@ describe('Importer', function () {
     });
 
     it('does not treat posts without slug as duplicate', function () {
-      let exportData = exportedBodyV2().db[0];
+      const exportData = exportedBodyV2().db[0];
 
       exportData.data.posts[0] = {
         title: 'duplicate title',
@@ -206,7 +206,7 @@ describe('Importer', function () {
     });
 
     it('can import user with missing allowed fields', function () {
-      let exportData = exportedBodyV2().db[0];
+      const exportData = exportedBodyV2().db[0];
 
       exportData.data.users[0] = testUtils.DataGenerator.forKnex.createUser();
       delete exportData.data.users[0].website;
@@ -223,7 +223,7 @@ describe('Importer', function () {
     });
 
     it('removes duplicate tags and updates associations', function () {
-      let exportData = exportedBodyV2().db[0];
+      const exportData = exportedBodyV2().db[0];
 
       exportData.data.posts[0] = testUtils.DataGenerator.forKnex.createPost();
 
@@ -265,7 +265,7 @@ describe('Importer', function () {
     });
 
     it('removes broken tags from post (not in db, not in file)', function () {
-      let exportData = exportedBodyV2().db[0];
+      const exportData = exportedBodyV2().db[0];
 
       exportData.data.posts[0] = testUtils.DataGenerator.forKnex.createPost({
         slug: 'welcome-to-ghost-2',

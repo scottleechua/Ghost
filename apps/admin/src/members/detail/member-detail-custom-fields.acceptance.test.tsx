@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { userEvent } from 'vitest/browser';
+import { page, userEvent } from 'vitest/browser';
 
 import {
   fakeAdminEndpoint,
@@ -10,28 +10,36 @@ import {
   type Member,
 } from '@test-utils/acceptance';
 import { memberDetailScreen } from './member-detail.screen';
+import type { MemberCustomField } from '@tryghost/admin-x-framework/api/member-custom-fields';
 
-const FLAGS = { labs: { membersCustomFields: true } };
-
-const FIELDS = [
+const FIELDS: MemberCustomField[] = [
   {
+    namespace: 'custom',
     key: 'job_title',
     name: 'Job title',
     type: 'short_text',
+    status: 'active',
+    access: { member: 'none' },
     created_at: '2026-07-14T00:00:00.000Z',
     updated_at: null,
   },
   {
+    namespace: 'custom',
     key: 'company',
     name: 'Company',
     type: 'long_text',
+    status: 'active',
+    access: { member: 'none' },
     created_at: '2026-07-14T00:00:00.000Z',
     updated_at: null,
   },
   {
+    namespace: 'custom',
     key: 'home_address',
     name: 'Home address',
     type: 'address',
+    status: 'active',
+    access: { member: 'none' },
     created_at: '2026-07-14T00:00:00.000Z',
     updated_at: null,
   },
@@ -40,18 +48,17 @@ const FIELDS = [
 const ADDRESS = { line1: '1 Main St', city: 'Berlin', postal_code: '10115', country: 'DE' };
 
 /**
- * The world the member detail screen reads at mount, plus the custom-fields
- * definitions. Values ride the member read payload (`custom_fields`), exactly
- * as the API returns them when the membersCustomFields flag is on. The world
- * is stateful: a PUT's merge patch is applied (null deletes), so the refetch
- * a save triggers returns the saved state.
+ * The world the member detail screen reads at mount. Stateful on purpose: the real
+ * endpoint treats a PUT as a merge patch, writing only the keys present and deleting a key
+ * sent as null, so the refetch a save triggers must return the merged result, not the
+ * original.
  */
 function fakeMemberDetailWorld(m: Member, initialValues: Record<string, unknown>) {
   let current: Record<string, unknown> = { ...m };
   const values: Record<string, unknown> = { ...initialValues };
   fakeMembers([m]);
   fakeAdminEndpoint('GET', new RegExp(`^/members/${m.id}/`), () => ({
-    members: [{ ...current, custom_fields: { ...values } }],
+    members: [{ ...current, metafields: { custom: { ...values } } }],
   }));
   fakeMemberCustomFields(FIELDS);
   fakeAdminEndpoint('GET', new RegExp('^/members/events/'), {
@@ -59,18 +66,18 @@ function fakeMemberDetailWorld(m: Member, initialValues: Record<string, unknown>
     meta: { pagination: { page: 1, limit: 5, pages: 1, total: 0, next: null, prev: null } },
   });
   return fakeAdminEndpoint('PUT', new RegExp(`^/members/${m.id}/`), ({ body }) => {
-    const { custom_fields: patch = {}, ...edited } = (
-      body as { members: Array<Record<string, unknown>> }
-    ).members[0];
+    const { metafields, ...edited } = (body as { members: Array<Record<string, unknown>> })
+      .members[0];
+    const patch = (metafields as { custom?: Record<string, unknown> } | undefined)?.custom ?? {};
     current = { ...current, ...edited };
-    for (const [key, value] of Object.entries(patch as Record<string, unknown>)) {
+    for (const [key, value] of Object.entries(patch)) {
       if (value === null) {
         delete values[key];
       } else {
         values[key] = value;
       }
     }
-    return { members: [{ ...current, custom_fields: { ...values } }] };
+    return { members: [{ ...current, metafields: { custom: { ...values } } }] };
   });
 }
 
@@ -80,11 +87,11 @@ describe('Member detail custom fields', () => {
   it('renders the member’s values as a read-only record, addresses as one line', async () => {
     const m = member({ name: 'Ada Lovelace' });
     fakeMemberDetailWorld(m, { job_title: 'Editor', home_address: ADDRESS });
-    await renderAdminApp(`/members/${m.id}`, FLAGS);
+    await renderAdminApp(`/members/${m.id}`);
 
     await expect.element(memberDetailScreen.fieldValue('Editor')).toBeVisible();
     await expect
-      .element(memberDetailScreen.fieldValue('1 Main St, Berlin, 10115, DE'))
+      .element(memberDetailScreen.fieldValue('1 Main St, Berlin, 10115, Germany'))
       .toBeVisible();
     // Company has no value: its row shows the empty dash, and nothing on
     // the page is an editable input for custom fields.
@@ -95,7 +102,7 @@ describe('Member detail custom fields', () => {
   it('saves one field through its own editor without touching the page Save', async () => {
     const m = member({ name: 'Ada Lovelace' });
     const editApi = fakeMemberDetailWorld(m, { job_title: 'Editor', company: 'Ghost' });
-    await renderAdminApp(`/members/${m.id}`, FLAGS);
+    await renderAdminApp(`/members/${m.id}`);
 
     await memberDetailScreen.editFieldButton('Job title').click();
     await modal().getByLabelText('Job title').fill('Publisher');
@@ -107,14 +114,14 @@ describe('Member detail custom fields', () => {
     await expect.element(memberDetailScreen.saveButton()).toBeDisabled();
     // The payload was a single-field merge patch: only this key, nothing else.
     const saved = editApi.lastRequest?.body as { members: Array<Record<string, unknown>> };
-    expect(saved.members[0].custom_fields).toEqual({ job_title: 'Publisher' });
+    expect(saved.members[0].metafields).toEqual({ custom: { job_title: 'Publisher' } });
     expect(saved.members[0].name).toBeUndefined();
   });
 
   it('leaves an unsaved page edit intact when a custom field is saved', async () => {
     const m = member({ name: 'Ada Lovelace' });
     const editApi = fakeMemberDetailWorld(m, { job_title: 'Editor' });
-    await renderAdminApp(`/members/${m.id}`, FLAGS);
+    await renderAdminApp(`/members/${m.id}`);
 
     // Dirty the page draft by editing the name, without saving it.
     await memberDetailScreen.nameInput().fill('Ada L.');
@@ -132,14 +139,14 @@ describe('Member detail custom fields', () => {
     await expect.element(memberDetailScreen.nameInput()).toHaveValue('Ada L.');
     await expect.element(pageSave).toBeEnabled();
     expect(editApi.lastRequest?.body).toEqual({
-      members: [{ id: m.id, custom_fields: { job_title: 'Publisher' } }],
+      members: [{ id: m.id, metafields: { custom: { job_title: 'Publisher' } } }],
     });
   });
 
   it('clears a value by saving an emptied editor (null merge patch)', async () => {
     const m = member({ name: 'Ada Lovelace' });
     const editApi = fakeMemberDetailWorld(m, { job_title: 'Editor' });
-    await renderAdminApp(`/members/${m.id}`, FLAGS);
+    await renderAdminApp(`/members/${m.id}`);
 
     await memberDetailScreen.editFieldButton('Job title').click();
     await modal().getByLabelText('Job title').fill('');
@@ -150,13 +157,13 @@ describe('Member detail custom fields', () => {
     await expect.element(modal()).not.toBeInTheDocument();
     await expect.element(memberDetailScreen.emptyValueDash()).toBeVisible();
     const saved = editApi.lastRequest?.body as { members: Array<Record<string, unknown>> };
-    expect(saved.members[0].custom_fields).toEqual({ job_title: null });
+    expect(saved.members[0].metafields).toEqual({ custom: { job_title: null } });
   });
 
   it('a dirty editor refuses casual dismissal; a pristine one closes freely', async () => {
     const m = member({ name: 'Ada Lovelace' });
     fakeMemberDetailWorld(m, { job_title: 'Editor' });
-    await renderAdminApp(`/members/${m.id}`, FLAGS);
+    await renderAdminApp(`/members/${m.id}`);
 
     // Dirty: Escape must NOT close it — typed values can't be lost to a
     // stray key or click; Cancel is the one explicit discard.
@@ -177,7 +184,7 @@ describe('Member detail custom fields', () => {
   it('cancelling the editor discards the edit', async () => {
     const m = member({ name: 'Ada Lovelace' });
     const editApi = fakeMemberDetailWorld(m, { job_title: 'Editor' });
-    await renderAdminApp(`/members/${m.id}`, FLAGS);
+    await renderAdminApp(`/members/${m.id}`);
 
     await memberDetailScreen.editFieldButton('Job title').click();
     await modal().getByLabelText('Job title').fill('Publisher');
@@ -190,51 +197,140 @@ describe('Member detail custom fields', () => {
   it('saves an address that leaves sub-fields the country does not use empty', async () => {
     const m = member({ name: 'Ada Lovelace' });
     const editApi = fakeMemberDetailWorld(m, {});
-    await renderAdminApp(`/members/${m.id}`, FLAGS);
+    await renderAdminApp(`/members/${m.id}`);
 
     // Hong Kong has no postal code, so leaving it empty is a complete address
     // rather than an incomplete one.
     await memberDetailScreen.editFieldButton('Home address').click();
     await modal().getByLabelText('Address line 1').fill('Flat 3, 8 Wan Chai Road');
     await modal().getByLabelText('City').fill('Hong Kong');
-    await modal().getByLabelText('Country').fill('HK');
+    await modal().getByRole('combobox', { name: 'Country' }).click();
+    await page.getByPlaceholder('Search countries...').fill('Hong Kong');
+    await page.getByRole('option', { name: /Hong Kong/ }).click();
     await modal().getByRole('button', { name: 'Save', exact: true }).click();
 
+    // The country reads by name; its exact wording is the browser's ("Hong Kong" in
+    // Chromium, "Hong Kong SAR China" elsewhere), so only the stable part is pinned.
     await expect
-      .element(memberDetailScreen.fieldValue('Flat 3, 8 Wan Chai Road, Hong Kong, HK'))
+      .element(page.getByText(/^Flat 3, 8 Wan Chai Road, Hong Kong, Hong Kong/))
       .toBeVisible();
     const saved = editApi.lastRequest?.body as { members: Array<Record<string, unknown>> };
-    expect(saved.members[0].custom_fields).toEqual({
-      home_address: { line1: 'Flat 3, 8 Wan Chai Road', city: 'Hong Kong', country: 'HK' },
+    expect(saved.members[0].metafields).toEqual({
+      custom: {
+        home_address: { line1: 'Flat 3, 8 Wan Chai Road', city: 'Hong Kong', country: 'HK' },
+      },
     });
   });
 
-  it('blocks saving a malformed country code with an inline error, then saves once fixed', async () => {
+  it('reads a stored country the list does not hold, and lets staff pick away from it', async () => {
+    // Stripe's "unknown region" code is not a country a picker offers, but a checkout
+    // can store it, so the editor has to show it rather than nothing.
+    const m = member({ name: 'Ada Lovelace' });
+    const editApi = fakeMemberDetailWorld(m, {
+      home_address: { line1: '1 Main St', country: 'ZZ' },
+    });
+    await renderAdminApp(`/members/${m.id}`);
+
+    await memberDetailScreen.editFieldButton('Home address').click();
+    await expect
+      .element(modal().getByRole('combobox', { name: 'Country' }))
+      .toHaveTextContent('Unknown Region');
+
+    await modal().getByRole('combobox', { name: 'Country' }).click();
+    await page.getByPlaceholder('Search countries...').fill('Germ');
+    await page.getByRole('option', { name: 'Germany' }).click();
+    await modal().getByRole('button', { name: 'Save', exact: true }).click();
+
+    await expect.element(memberDetailScreen.fieldValue('1 Main St, Germany')).toBeVisible();
+    const saved = editApi.lastRequest?.body as { members: Array<Record<string, unknown>> };
+    expect(saved.members[0].metafields).toEqual({
+      custom: { home_address: { line1: '1 Main St', country: 'DE' } },
+    });
+  });
+
+  it('saves the country picked from the list as its code', async () => {
     const m = member({ name: 'Ada Lovelace' });
     const editApi = fakeMemberDetailWorld(m, {});
-    await renderAdminApp(`/members/${m.id}`, FLAGS);
+    await renderAdminApp(`/members/${m.id}`);
 
     await memberDetailScreen.editFieldButton('Home address').click();
     await modal().getByLabelText('Address line 1').fill('1 Main St');
     await modal().getByLabelText('City').fill('Berlin');
     await modal().getByLabelText('Postal code').fill('10115');
-    await modal().getByLabelText('Country').fill('DEU');
+    await modal().getByRole('combobox', { name: 'Country' }).click();
+    await page.getByPlaceholder('Search countries...').fill('Germ');
+    await page.getByRole('option', { name: 'Germany' }).click();
+    await expect
+      .element(modal().getByRole('combobox', { name: 'Country' }))
+      .toHaveTextContent('Germany');
+    await modal().getByRole('button', { name: 'Save', exact: true }).click();
+
+    await expect
+      .element(memberDetailScreen.fieldValue('1 Main St, Berlin, 10115, Germany'))
+      .toBeVisible();
+    const saved = editApi.lastRequest?.body as { members: Array<Record<string, unknown>> };
+    expect(saved.members[0].metafields).toEqual({ custom: { home_address: ADDRESS } });
+  });
+
+  it('clears a country by picking the chosen one again', async () => {
+    const m = member({ name: 'Ada Lovelace' });
+    const editApi = fakeMemberDetailWorld(m, {
+      home_address: { line1: '1 Main St', city: 'Berlin', country: 'DE' },
+    });
+    await renderAdminApp(`/members/${m.id}`);
+
+    await memberDetailScreen.editFieldButton('Home address').click();
+    await modal().getByRole('combobox', { name: 'Country' }).click();
+    await page.getByRole('option', { name: 'Germany' }).click();
+    await expect
+      .element(modal().getByRole('combobox', { name: 'Country' }))
+      .toHaveTextContent('Select...');
+    await modal().getByRole('button', { name: 'Save', exact: true }).click();
+
+    // The emptied part is named in the write, since leaving it out would read as
+    // "no change"; the rest of the address stays.
+    await expect.element(memberDetailScreen.fieldValue('1 Main St, Berlin')).toBeVisible();
+    const saved = editApi.lastRequest?.body as { members: Array<Record<string, unknown>> };
+    expect(saved.members[0].metafields).toEqual({
+      custom: { home_address: { line1: '1 Main St', city: 'Berlin', country: '' } },
+    });
+  });
+
+  it('blocks saving a stored malformed country code with an inline error, then saves once fixed', async () => {
+    // Staff cannot type a code any more, but an import can store one the picker would
+    // never offer. It loads as it is, so it can be seen, and is refused until replaced.
+    const m = member({ name: 'Ada Lovelace' });
+    const editApi = fakeMemberDetailWorld(m, {
+      home_address: { line1: '1 Main St', country: 'DEU' },
+    });
+    await renderAdminApp(`/members/${m.id}`);
+
+    await memberDetailScreen.editFieldButton('Home address').click();
+    await expect
+      .element(modal().getByRole('combobox', { name: 'Country' }))
+      .toHaveTextContent('DEU');
+    await modal().getByLabelText('City').fill('Berlin');
     await modal().getByRole('button', { name: 'Save', exact: true }).click();
 
     // No request went out; the error says what to do, in plain words.
     await expect
       .element(modal().getByText('Enter a 2-letter country code, like US.'))
       .toBeVisible();
+    await expect
+      .element(modal().getByRole('combobox', { name: 'Country' }))
+      .toHaveAttribute('aria-invalid', 'true');
     expect(editApi.requests).toHaveLength(0);
 
-    await modal().getByLabelText('Country').fill('DE');
+    await modal().getByRole('combobox', { name: 'Country' }).click();
+    await page.getByPlaceholder('Search countries...').fill('Germ');
+    await page.getByRole('option', { name: 'Germany' }).click();
     await modal().getByRole('button', { name: 'Save', exact: true }).click();
 
-    await expect
-      .element(memberDetailScreen.fieldValue('1 Main St, Berlin, 10115, DE'))
-      .toBeVisible();
+    await expect.element(memberDetailScreen.fieldValue('1 Main St, Berlin, Germany')).toBeVisible();
     const saved = editApi.lastRequest?.body as { members: Array<Record<string, unknown>> };
-    expect(saved.members[0].custom_fields).toEqual({ home_address: ADDRESS });
+    expect(saved.members[0].metafields).toEqual({
+      custom: { home_address: { line1: '1 Main St', city: 'Berlin', country: 'DE' } },
+    });
   });
 
   it('pins a server-side 422 to the field it names, inside the editor', async () => {
@@ -248,7 +344,7 @@ describe('Member detail custom fields', () => {
       {
         errors: [
           {
-            property: 'custom_fields.job_title',
+            property: 'metafields.custom.job_title',
             context: 'Rejected by the server for reasons the client could not know.',
             message: 'Validation error, cannot edit member.',
           },
@@ -256,7 +352,7 @@ describe('Member detail custom fields', () => {
       },
       { status: 422 },
     );
-    await renderAdminApp(`/members/${m.id}`, FLAGS);
+    await renderAdminApp(`/members/${m.id}`);
 
     await memberDetailScreen.editFieldButton('Job title').click();
     await modal().getByLabelText('Job title').fill('Editor');
@@ -271,14 +367,14 @@ describe('Member detail custom fields', () => {
     const m = member({ name: 'Ada Lovelace' });
     fakeMembers([m]);
     fakeAdminEndpoint('GET', new RegExp(`^/members/${m.id}/`), {
-      members: [{ ...m, custom_fields: {} }],
+      members: [{ ...m, metafields: { custom: {} } }],
     });
     fakeMemberCustomFields([]);
     fakeAdminEndpoint('GET', new RegExp('^/members/events/'), {
       events: [],
       meta: { pagination: { page: 1, limit: 5, pages: 1, total: 0, next: null, prev: null } },
     });
-    await renderAdminApp(`/members/${m.id}`, FLAGS);
+    await renderAdminApp(`/members/${m.id}`);
 
     await expect.element(memberDetailScreen.nameInput()).toBeVisible();
     await expect.element(memberDetailScreen.customFieldsSection()).not.toBeInTheDocument();

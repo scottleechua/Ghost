@@ -58,6 +58,13 @@ async function getOfferByStripeCoupon(stripeCouponId) {
 }
 
 async function assertMemberEvents({ eventType, memberId, asserts }) {
+  // These rows are not written by the request under test. Ghost dispatches the member
+  // and subscription events once the transaction that created them has committed, and a
+  // subscriber then writes a row for each one. That write is still running when the
+  // response reaches us, so read the rows only once every dispatched event has been
+  // handled.
+  await DomainEvents.allSettled();
+
   const events = (await models[eventType].where('member_id', memberId).fetchAll()).toJSON();
   for (let i = 0; i < asserts.length; i++) {
     assertObjectMatches(events[i], asserts[i]);
@@ -1310,11 +1317,6 @@ describe('Members API', function () {
       assert.equal(member.status, 'paid', 'The member should be "paid"');
       assert.equal(member.subscriptions.length, 1, 'The member should have a single subscription');
 
-      mockManager.assert.sentEmail({
-        subject: '🙌 Thank you for signing up to Ghost!',
-        to: 'checkout-webhook-test@email.com',
-      });
-
       // Check whether MRR and status has been set
       await assertSubscription(member.subscriptions[0].id, {
         subscription_id: subscription.id,
@@ -1357,10 +1359,20 @@ describe('Members API', function () {
         ],
       });
 
-      // Wait for the dispatched events (because this happens async)
+      // Neither of these emails is sent by the webhook request itself. The staff
+      // notification comes from a subscriber to a domain event that is only dispatched
+      // once the member transaction has committed, and the member's own signup email is
+      // started by the webhook handler without being awaited. Both can therefore still
+      // be in flight when the request returns, and nothing decides which of the two is
+      // sent first, so wait for each on its own rather than reading them in send order.
       await DomainEvents.allSettled();
 
-      mockManager.assert.sentEmail({
+      await mockManager.assert.sentEmailEventually({
+        subject: '🙌 Thank you for signing up to Ghost!',
+        to: 'checkout-webhook-test@email.com',
+      });
+
+      await mockManager.assert.sentEmailEventually({
         subject: '💸 Paid subscription started: checkout-webhook-test@email.com',
         to: 'jbloggs@example.com',
       });
@@ -1377,9 +1389,10 @@ describe('Members API', function () {
 
       async function createField(name, type) {
         const { body } = await adminAgent
-          .post('/members/custom_fields/')
-          .body({ members_custom_fields: [{ name, type }] });
-        return body.members_custom_fields[0].key;
+          .post('/members/metafields/custom/')
+          .body({ members_metafields: [{ name, type }] })
+          .expectStatus(201);
+        return body.members_metafields[0].key;
       }
 
       async function sendCheckoutWebhook(email, sessionExtras) {
@@ -1405,6 +1418,9 @@ describe('Members API', function () {
           },
         });
 
+        // The status matters as much as what was stored. Saving a value is allowed to
+        // fail, but failing the webhook is not: Stripe retries an event it could not
+        // deliver, which risks doing the payment work twice.
         await membersAgent
           .post('/webhooks/stripe/')
           .body(webhookPayload)
@@ -1415,7 +1431,8 @@ describe('Members API', function () {
               payload: webhookPayload,
               secret: process.env.WEBHOOK_SECRET,
             }),
-          );
+          )
+          .expectStatus(200);
 
         const { body } = await adminAgent.get(`/members/?search=${encodeURIComponent(email)}`);
         assert.equal(body.members.length, 1, 'The member was not created');
@@ -1455,11 +1472,11 @@ describe('Members API', function () {
       });
 
       afterEach(async function () {
-        await models.Base.knex('members_custom_field_values').del();
-        await models.Base.knex('members_custom_field_bindings').del();
+        await models.Base.knex('members_metafield_values').del();
+        await models.Base.knex('members_metafield_bindings').del();
         await models.Base.knex('products_checkout_fields').del();
         await models.Base.knex('products_checkout_config').del();
-        await models.Base.knex('members_custom_fields').del();
+        await models.Base.knex('members_metafields').del();
         // The second tier one test adds is a paid product, and `getPaidProduct` asks for
         // whichever paid product comes first. Leaving it behind would decide that answer
         // for every test after this one.
@@ -1483,12 +1500,12 @@ describe('Members API', function () {
           customer_details: { tax_ids: [{ type: 'gb_vat', value: 'GB123456789' }] },
         });
 
-        assert.equal(member.custom_fields[fieldKeys.question], 'Large');
+        assert.equal(member.metafields.custom[fieldKeys.question], 'Large');
         // Stripe returns the recipient beside the address and Ghost keeps them
         // apart, so each lands in the field the publisher chose for it.
-        assert.equal(member.custom_fields[fieldKeys.recipient], 'Bex Jones, c/o Acme Ltd');
+        assert.equal(member.metafields.custom[fieldKeys.recipient], 'Bex Jones, c/o Acme Ltd');
         // Stripe's address parts are exactly ours, so nothing is transformed.
-        assert.deepEqual(member.custom_fields[fieldKeys.address], {
+        assert.deepEqual(member.metafields.custom[fieldKeys.address], {
           line1: '1 High Street',
           city: 'London',
           postal_code: 'E1 6AN',
@@ -1496,7 +1513,30 @@ describe('Members API', function () {
         });
         // Asked for on the page and kept by Stripe against the customer it invoices.
         // Ghost never copies one into a publisher's field, so there is nothing here for it.
-        assert.equal(member.custom_fields[fieldKeys.vat], undefined);
+        assert.equal(member.metafields.custom[fieldKeys.vat], undefined);
+
+        // Each value arrives through its own binding, so the member's activity feed has
+        // an entry per field stored, each saying it was collected at checkout.
+        const filter = encodeURIComponent(
+          `data.member_id:'${member.id}'+type:metafield_change_event`,
+        );
+        const { body } = await adminAgent
+          .get(`/members/events/?filter=${filter}`)
+          .expectStatus(200);
+        assert.deepEqual(
+          body.events
+            .map(({ data }) => ({
+              field: data.metafields[0].name,
+              source: data.source,
+              writer: data.written_by_type,
+            }))
+            .sort((a, b) => a.field.localeCompare(b.field)),
+          [
+            { field: 'Delivery address', source: 'checkout', writer: 'binding' },
+            { field: 'Recipient name', source: 'checkout', writer: 'binding' },
+            { field: 'T-shirt size', source: 'checkout', writer: 'binding' },
+          ],
+        );
       });
 
       // Turning collection off has to stop the collecting, and Stripe keeps returning
@@ -1520,7 +1560,31 @@ describe('Members API', function () {
           customer_details: { phone: '+447700900123' },
         });
 
-        assert.equal(member.custom_fields[phone], '+447700900123');
+        assert.equal(member.metafields.custom[phone], '+447700900123');
+      });
+
+      // The values a session carries have nothing to do with each other beyond arriving
+      // together, so one the catalog refuses must not cost the publisher the rest. A
+      // shipping address is the case that matters: a courier needs it, and a t-shirt size
+      // typed too long is no reason to lose it.
+      it('keeps the values it can when one of them is refused', async function () {
+        const member = await sendCheckoutWebhook('checkout-partly-refused@email.com', {
+          custom_fields: [
+            { key: fieldKeys.question, type: 'text', text: { value: 'X'.repeat(300) } },
+          ],
+          shipping: { name: 'Bex Jones', address: { line1: '1 High Street', country: 'GB' } },
+        });
+
+        assert.equal(
+          member.metafields.custom[fieldKeys.question],
+          undefined,
+          'the answer too long to store was not stored',
+        );
+        assert.equal(member.metafields.custom[fieldKeys.recipient], 'Bex Jones');
+        assert.deepEqual(member.metafields.custom[fieldKeys.address], {
+          line1: '1 High Street',
+          country: 'GB',
+        });
       });
 
       // The member has already paid by the time this runs, so losing an answer must never
@@ -1535,7 +1599,7 @@ describe('Members API', function () {
 
         assert.ok(member, 'the member was still created');
         assert.deepEqual(
-          member.custom_fields,
+          member.metafields.custom,
           {},
           'nothing was collected, and nothing else was disturbed',
         );
@@ -1583,11 +1647,11 @@ describe('Members API', function () {
         });
 
         assert.equal(
-          member.custom_fields[fieldKeys.recipient],
+          member.metafields.custom[fieldKeys.recipient],
           undefined,
           'no recipient name was kept',
         );
-        assert.equal(member.custom_fields[fieldKeys.address], undefined, 'no address was kept');
+        assert.equal(member.metafields.custom[fieldKeys.address], undefined, 'no address was kept');
       });
 
       // The acceptance criterion this whole thing turns on: a value Stripe collected
@@ -1599,7 +1663,7 @@ describe('Members API', function () {
           shipping: { name: 'Bex Jones', address: { line1: '1 High Street', country: 'GB' } },
         });
 
-        const written = await models.Base.knex('members_custom_field_values')
+        const written = await models.Base.knex('members_metafield_values')
           .where('member_id', member.id)
           .distinct('written_by_type')
           .pluck('written_by_type');
@@ -1608,14 +1672,14 @@ describe('Members API', function () {
         // The id is the point: it resolves back to the tier that asked, what it was
         // collected as, and the field it landed in — which is everything worth
         // knowing about how a value got here, and more than a name could say.
-        const resolved = await models.Base.knex('members_custom_field_values')
+        const resolved = await models.Base.knex('members_metafield_values')
           .join(
-            'members_custom_field_bindings',
-            'members_custom_field_bindings.id',
-            'members_custom_field_values.written_by_id',
+            'members_metafield_bindings',
+            'members_metafield_bindings.id',
+            'members_metafield_values.written_by_id',
           )
-          .where('members_custom_field_values.member_id', member.id)
-          .distinct('members_custom_field_bindings.port')
+          .where('members_metafield_values.member_id', member.id)
+          .distinct('members_metafield_bindings.port')
           .pluck('port');
         assert.deepEqual(
           resolved.sort(),
@@ -1656,7 +1720,7 @@ describe('Members API', function () {
           shipping: { name: 'Collected by Stripe', address: { country: 'GB' } },
         });
 
-        assert.equal(member.custom_fields[fieldKeys.recipient], 'Collected by Stripe');
+        assert.equal(member.metafields.custom[fieldKeys.recipient], 'Collected by Stripe');
       });
 
       // A value the member gave us for free must never fail the webhook: a throw makes
@@ -1674,23 +1738,75 @@ describe('Members API', function () {
 
         assert.equal(member.status, 'paid');
         assert.equal(
-          member.custom_fields[fieldKeys.question],
+          member.metafields.custom[fieldKeys.question],
           'Large',
           'the answer beside it was kept',
         );
         assert.equal(
-          member.custom_fields[fieldKeys.recipient],
+          member.metafields.custom[fieldKeys.recipient],
           'Ada Lovelace',
           'and so was the other half of what Stripe returned together',
         );
-        assert.equal(member.custom_fields[fieldKeys.address], undefined);
+        assert.equal(member.metafields.custom[fieldKeys.address], undefined);
       });
 
       it('leaves the member alone when the checkout collected nothing', async function () {
         const member = await sendCheckoutWebhook('checkout-collected-nothing@email.com', {});
 
         assert.equal(member.status, 'paid');
-        assert.deepEqual(member.custom_fields, {});
+        assert.deepEqual(member.metafields.custom, {});
+      });
+
+      // A checkout session can be started with nothing but an email address, and typing
+      // an email is not proof of owning it. The tests above all write onto the member
+      // the webhook itself created, which is safe: that record holds nothing the buyer
+      // didn't supply. A record that existed before the checkout is only written when
+      // the session was started by a signed-in member.
+      it('does not write onto a member that existed before an unverified checkout', async function () {
+        const email = 'checkout-collected-preexisting@email.com';
+        const { body: created } = await adminAgent
+          .post('/members/')
+          .body({ members: [{ email }] })
+          .expectStatus(201);
+        await adminAgent
+          .put(`/members/${created.members[0].id}/`)
+          .body({ members: [{ metafields: { custom: { [fieldKeys.question]: 'Small' } } }] })
+          .expectStatus(200);
+
+        const member = await sendCheckoutWebhook(email, {
+          custom_fields: [{ key: fieldKeys.question, type: 'text', text: { value: 'Large' } }],
+          shipping: {
+            name: 'Someone Else',
+            address: { line1: '1 High Street', country: 'GB' },
+          },
+        });
+
+        assert.equal(member.status, 'paid', 'the payment work still happened');
+        assert.equal(
+          member.metafields.custom[fieldKeys.question],
+          'Small',
+          'the stored answer was not overwritten',
+        );
+        assert.equal(member.metafields.custom[fieldKeys.recipient], undefined);
+        assert.equal(member.metafields.custom[fieldKeys.address], undefined);
+      });
+
+      it('writes onto an existing member when the checkout was started signed in', async function () {
+        const email = 'checkout-collected-signed-in@email.com';
+        await adminAgent
+          .post('/members/')
+          .body({ members: [{ email }] })
+          .expectStatus(201);
+
+        const member = await sendCheckoutWebhook(email, {
+          metadata: {
+            ghostTierId: (await getPaidProduct()).id,
+            ghostSignupContext: 'already_authenticated',
+          },
+          custom_fields: [{ key: fieldKeys.question, type: 'text', text: { value: 'Large' } }],
+        });
+
+        assert.equal(member.metafields.custom[fieldKeys.question], 'Large');
       });
     });
 
@@ -2669,7 +2785,7 @@ describe('Members API', function () {
   describe('Discounts', function () {
     const beforeNow = Math.floor((Date.now() - 2000) / 1000) * 1000;
     let offer;
-    let couponId = 'testCoupon123';
+    const couponId = 'testCoupon123';
 
     beforeAll(async function () {
       const agents = await agentProvider.getAgentsForMembers();
@@ -3375,7 +3491,7 @@ describe('Members API', function () {
         },
       });
 
-      let webhookPayload = JSON.stringify({
+      const webhookPayload = JSON.stringify({
         type: 'checkout.session.completed',
         data: {
           object: {
@@ -3387,7 +3503,7 @@ describe('Members API', function () {
         },
       });
 
-      let webhookSignature = stripe.webhooks.generateTestHeaderString({
+      const webhookSignature = stripe.webhooks.generateTestHeaderString({
         payload: webhookPayload,
         secret: process.env.WEBHOOK_SECRET,
       });
@@ -3575,7 +3691,7 @@ describe('Members API', function () {
         },
       });
 
-      let webhookPayload = JSON.stringify({
+      const webhookPayload = JSON.stringify({
         type: 'checkout.session.completed',
         data: {
           object: {
@@ -3601,7 +3717,7 @@ describe('Members API', function () {
         },
       });
 
-      let webhookSignature = stripe.webhooks.generateTestHeaderString({
+      const webhookSignature = stripe.webhooks.generateTestHeaderString({
         payload: webhookPayload,
         secret: process.env.WEBHOOK_SECRET,
       });
@@ -3967,14 +4083,14 @@ describe('Members API', function () {
         .expectStatus(201);
       let member = res.body.members[0];
 
-      let webhookPayload = JSON.stringify({
+      const webhookPayload = JSON.stringify({
         type: 'customer.subscription.created',
         data: {
           object: subscription,
         },
       });
 
-      let webhookSignature = stripe.webhooks.generateTestHeaderString({
+      const webhookSignature = stripe.webhooks.generateTestHeaderString({
         payload: webhookPayload,
         secret: process.env.WEBHOOK_SECRET,
       });
@@ -4065,7 +4181,7 @@ describe('Members API', function () {
         },
       });
 
-      let webhookPayload = JSON.stringify({
+      const webhookPayload = JSON.stringify({
         type: 'checkout.session.completed',
         data: {
           object: {
@@ -4076,7 +4192,7 @@ describe('Members API', function () {
         },
       });
 
-      let webhookSignature = stripe.webhooks.generateTestHeaderString({
+      const webhookSignature = stripe.webhooks.generateTestHeaderString({
         payload: webhookPayload,
         secret: process.env.WEBHOOK_SECRET,
       });
@@ -4138,6 +4254,362 @@ describe('Members API', function () {
             subscriptionAttributions,
           );
         });
+    });
+
+    describe('incomplete subscription conversions', function () {
+      let memberId;
+      let postId;
+      let initialConversions;
+      let productId;
+
+      beforeEach(async function () {
+        productId = (await getPaidProduct()).id;
+        postId = fixtureManager.get('posts', 0).id;
+        const postResponse = await adminAgent
+          .get(`/posts/${postId}/?include=count.paid_conversions`)
+          .expectStatus(200);
+        initialConversions = postResponse.body.posts[0].count.paid_conversions;
+
+        const customerId = createStripeID('cus');
+        const response = await adminAgent
+          .post('/members/')
+          .body({
+            members: [{ email: `${customerId}@example.com`, subscribed: false }],
+          })
+          .expectStatus(201);
+        memberId = response.body.members[0].id;
+        await models.MemberStripeCustomer.add({
+          member_id: memberId,
+          customer_id: customerId,
+        });
+        set(customer, {
+          id: customerId,
+          email: response.body.members[0].email,
+          invoice_settings: {},
+          subscriptions: { data: [] },
+        });
+        set(subscription, {
+          id: createStripeID('sub'),
+          customer: customerId,
+          status: 'incomplete',
+          cancel_at_period_end: false,
+          start_date: beforeNow / 1000,
+          current_period_end: beforeNow / 1000 + 86400 * 31,
+          items: {
+            data: [
+              {
+                price: {
+                  id: 'price_123',
+                  product: 'product_123',
+                  active: true,
+                  nickname: 'month',
+                  currency: 'usd',
+                  recurring: { interval: 'month' },
+                  unit_amount: 150,
+                  type: 'recurring',
+                },
+              },
+            ],
+          },
+          metadata: {
+            attribution_id: postId,
+            attribution_type: 'post',
+            attribution_url: '/original-post/',
+            referrer_source: 'Google',
+            utm_campaign: 'summer',
+          },
+        });
+      });
+
+      async function deliver(type, object = subscription) {
+        const payload = JSON.stringify({ type, api_version: '2020-08-27', data: { object } });
+        const signature = stripe.webhooks.generateTestHeaderString({
+          payload,
+          secret: process.env.WEBHOOK_SECRET,
+        });
+        await membersAgent
+          .post('/webhooks/stripe/')
+          .body(payload)
+          .header('content-type', 'application/json')
+          .header('stripe-signature', signature)
+          .expectStatus(200);
+        await DomainEvents.allSettled();
+      }
+
+      async function assertSubscriptionState({ status, mrr, paid = false }) {
+        const member = await getMember(memberId);
+        await member.load(['products', 'stripeCustomers.subscriptions']);
+        assert.equal(member.get('status'), paid ? 'paid' : 'free');
+        assert.deepEqual(member.related('products').pluck('id'), paid ? [productId] : []);
+
+        const customers = member.related('stripeCustomers');
+        assert.equal(customers.length, 1);
+        assert.equal(customers.at(0).get('customer_id'), customer.id);
+        const subscriptions = customers.at(0).related('subscriptions');
+        assert.equal(subscriptions.length, 1);
+        const stored = subscriptions.at(0);
+        assertObjectMatches(models.Base.Model.prototype.serialize.call(stored), {
+          subscription_id: subscription.id,
+          customer_id: customer.id,
+          stripe_price_id: 'price_123',
+          plan_amount: 150,
+          plan_interval: 'month',
+          plan_currency: 'usd',
+          status,
+          mrr,
+        });
+        assert.equal(new Date(stored.get('start_date')).getTime(), subscription.start_date * 1000);
+        assert.equal(
+          new Date(stored.get('current_period_end')).getTime(),
+          subscription.current_period_end * 1000,
+        );
+        return stored.id;
+      }
+
+      async function assertConversions(expected) {
+        const response = await adminAgent
+          .get(`/posts/${postId}/?include=count.paid_conversions`)
+          .expectStatus(200);
+        assert.equal(response.body.posts[0].count.paid_conversions, initialConversions + expected);
+        const events = await models.SubscriptionCreatedEvent.where(
+          'member_id',
+          memberId,
+        ).fetchAll();
+        assert.equal(events.length, expected);
+        if (expected) {
+          assert.equal(events.at(0).get('attribution_id'), postId);
+          assert.equal(events.at(0).get('referrer_source'), 'Google');
+          assert.equal(events.at(0).get('utm_campaign'), 'summer');
+        }
+      }
+
+      it('keeps incomplete and expired attempts out of paid conversions and activity', async function () {
+        await deliver('customer.subscription.created');
+        const storedId = await assertSubscriptionState({ status: 'incomplete', mrr: 0 });
+        await assertConversions(0);
+        subscription.status = 'incomplete_expired';
+        await deliver('customer.subscription.updated');
+        await deliver('customer.subscription.updated');
+
+        await assertConversions(0);
+        assert.equal(
+          await assertSubscriptionState({ status: 'incomplete_expired', mrr: 0 }),
+          storedId,
+        );
+        await assertMemberEvents({
+          eventType: 'MemberPaidSubscriptionEvent',
+          memberId,
+          asserts: [],
+        });
+        const response = await adminAgent.get(`/members/${memberId}/`).expectStatus(200);
+        assert.equal(response.body.members[0].status, 'free');
+        assert.equal(response.body.members[0].subscriptions.length, 0);
+      });
+
+      it('groups signup with the subscription start when checkout creates a paid member', async function () {
+        // Use a new customer so checkout creates the member and its signup batch.
+        customer.id = createStripeID('cus');
+        customer.email = `${customer.id}@example.com`;
+        subscription.customer = customer.id;
+        subscription.status = 'active';
+        customer.subscriptions.data = [subscription];
+        const checkout = {
+          id: createStripeID('cs'),
+          object: 'checkout.session',
+          mode: 'subscription',
+          customer: customer.id,
+          subscription: subscription.id,
+          payment_status: 'paid',
+          metadata: subscription.metadata,
+        };
+        await deliver('checkout.session.completed', checkout);
+        memberId = (await models.Member.findOne({ email: customer.email })).id;
+        await assertConversions(1);
+        await assertSubscriptionState({ status: 'active', mrr: 150, paid: true });
+
+        const signup = await models.MemberCreatedEvent.findOne({ member_id: memberId });
+        const conversion = await models.SubscriptionCreatedEvent.findOne({ member_id: memberId });
+        assert.ok(signup.get('batch_id'));
+        assert.equal(conversion.get('batch_id'), signup.get('batch_id'));
+
+        const response = await adminAgent
+          .get(
+            `/members/events/?filter=${encodeURIComponent(
+              `type:[signup_event,subscription_event]+data.member_id:'${memberId}'`,
+            )}`,
+          )
+          .expectStatus(200);
+        assert.equal(response.body.events.length, 1);
+        assertObjectMatches(response.body.events[0], {
+          type: 'subscription_event',
+          data: { type: 'created', signup: true },
+        });
+      });
+
+      it('counts successful checkout once and retains it after cancellation', async function () {
+        const originalWebhook = structuredClone(subscription);
+        await deliver('customer.subscription.created');
+        const storedId = await assertSubscriptionState({ status: 'incomplete', mrr: 0 });
+        await assertConversions(0);
+        const signup = await models.MemberCreatedEvent.findOne({ member_id: memberId });
+        assert.ok(signup.get('batch_id'));
+        const eventsUrl = `/members/events/?filter=${encodeURIComponent(
+          `type:[signup_event,subscription_event]+data.member_id:'${memberId}'`,
+        )}`;
+        const beforeActivation = await adminAgent.get(eventsUrl).expectStatus(200);
+        assert.equal(beforeActivation.body.events.length, 1);
+        assert.equal(beforeActivation.body.events[0].type, 'signup_event');
+
+        subscription.status = 'active';
+        await deliver('customer.subscription.updated');
+        // A delayed creation webhook must use the current Stripe state and not duplicate the conversion.
+        await deliver('customer.subscription.created', originalWebhook);
+        await deliver('customer.subscription.updated');
+
+        assert.equal(
+          await assertSubscriptionState({ status: 'active', mrr: 150, paid: true }),
+          storedId,
+        );
+        await assertConversions(1);
+        await assertMemberEvents({
+          eventType: 'MemberPaidSubscriptionEvent',
+          memberId,
+          asserts: [{ type: 'created', from_plan: null, to_plan: 'price_123', mrr_delta: 150 }],
+        });
+        const response = await adminAgent.get(`/members/${memberId}/`).expectStatus(200);
+        assert.equal(response.body.members[0].status, 'paid');
+
+        const conversion = await models.SubscriptionCreatedEvent.findOne({ member_id: memberId });
+        assert.notEqual(conversion.get('batch_id'), signup.get('batch_id'));
+        const afterActivation = await adminAgent.get(eventsUrl).expectStatus(200);
+        const events = afterActivation.body.events;
+        assert.equal(events.length, 2);
+        assert.equal(events.filter((event) => event.type === 'signup_event').length, 1);
+        assertObjectMatches(
+          events.find((event) => event.type === 'subscription_event'),
+          {
+            data: { type: 'created', signup: false },
+          },
+        );
+
+        subscription.status = 'canceled';
+        subscription.canceled_at = Math.floor(Date.now() / 1000);
+        await deliver('customer.subscription.deleted');
+        assert.equal(await assertSubscriptionState({ status: 'canceled', mrr: 0 }), storedId);
+        await assertConversions(1);
+        await assertMemberEvents({
+          eventType: 'MemberPaidSubscriptionEvent',
+          memberId,
+          asserts: [
+            { type: 'created', mrr_delta: 150 },
+            { type: 'expired', mrr_delta: -150 },
+          ],
+        });
+      });
+
+      for (const status of ['active', 'incomplete_expired']) {
+        it(`records ${status === 'active' ? 'one' : 'no'} offer redemption when incomplete becomes ${status}`, async function () {
+          set(coupon, {
+            id: createStripeID('coupon').slice(0, 20),
+            object: 'coupon',
+            amount_off: null,
+            created: beforeNow / 1000,
+            currency: null,
+            duration: 'forever',
+            duration_in_months: null,
+            livemode: false,
+            max_redemptions: null,
+            metadata: {},
+            name: '20% off',
+            percent_off: 20,
+            redeem_by: null,
+            times_redeemed: 0,
+            valid: true,
+          });
+          subscription.discount = {
+            id: createStripeID('di'),
+            object: 'discount',
+            customer: customer.id,
+            subscription: subscription.id,
+            coupon,
+            start: beforeNow / 1000,
+            end: null,
+          };
+
+          await deliver('customer.subscription.created');
+          await deliver('customer.subscription.updated');
+          const offer = await getOfferByStripeCoupon(coupon.id);
+          assert.ok(offer);
+          const stored = await getSubscription(subscription.id);
+          assert.equal(stored.get('offer_id'), offer.id);
+          await assertMemberEvents({ eventType: 'OfferRedemption', memberId, asserts: [] });
+          await assertConversions(0);
+
+          subscription.status = status;
+          await deliver('customer.subscription.updated');
+          await deliver('customer.subscription.updated');
+
+          const activated = status === 'active';
+          assert.equal(
+            await assertSubscriptionState({ status, mrr: activated ? 120 : 0, paid: activated }),
+            stored.id,
+          );
+          await assertMemberEvents({
+            eventType: 'OfferRedemption',
+            memberId,
+            asserts: activated ? [{ offer_id: offer.id, subscription_id: stored.id }] : [],
+          });
+          await assertConversions(activated ? 1 : 0);
+        });
+      }
+
+      for (const statusAtCheckout of ['incomplete', 'active']) {
+        it(`syncs a ${statusAtCheckout} subscription when checkout links the customer after the first webhook`, async function () {
+          const customerLink = await models.MemberStripeCustomer.findOne({
+            customer_id: customer.id,
+          });
+          await customerLink.destroy();
+          await deliver('customer.subscription.created');
+          assert.equal(
+            await models.StripeCustomerSubscription.findOne({ subscription_id: subscription.id }),
+            null,
+          );
+          await assertConversions(0);
+
+          subscription.status = statusAtCheckout;
+          customer.subscriptions.data = [subscription];
+          const checkout = {
+            id: createStripeID('cs'),
+            object: 'checkout.session',
+            mode: 'subscription',
+            customer: customer.id,
+            subscription: subscription.id,
+            payment_status: statusAtCheckout === 'active' ? 'paid' : 'unpaid',
+            metadata: subscription.metadata,
+          };
+          await deliver('checkout.session.completed', checkout);
+          const storedId = await assertSubscriptionState({
+            status: statusAtCheckout,
+            mrr: statusAtCheckout === 'active' ? 150 : 0,
+            paid: statusAtCheckout === 'active',
+          });
+          await assertConversions(statusAtCheckout === 'active' ? 1 : 0);
+
+          subscription.status = 'active';
+          await deliver('customer.subscription.updated');
+          await deliver('checkout.session.completed', checkout);
+          assert.equal(
+            await assertSubscriptionState({ status: 'active', mrr: 150, paid: true }),
+            storedId,
+          );
+          await assertConversions(1);
+          await assertMemberEvents({
+            eventType: 'MemberPaidSubscriptionEvent',
+            memberId,
+            asserts: [{ type: 'created', subscription_id: storedId, mrr_delta: 150 }],
+          });
+        });
+      }
     });
   });
 });

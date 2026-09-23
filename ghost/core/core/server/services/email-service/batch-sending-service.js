@@ -2,6 +2,7 @@ const logging = require('@tryghost/logging');
 const ObjectID = require('bson-objectid').default;
 const errors = require('@tryghost/errors');
 const tpl = require('@tryghost/tpl');
+const SendEmailJob = require('./jobs/send-email-job').default;
 const messages = {
   emailErrorPartialFailure:
     'An error occurred, and your newsletter was only partially sent. Please retry sending the remaining emails.',
@@ -17,7 +18,7 @@ const SHUTDOWN_CODE = 'BULK_EMAIL_SHUTDOWN_IN_PROGRESS';
  * @typedef {import('./email-renderer')} EmailRenderer
  * @typedef {import('./domain-warming-service').DomainWarmingService} DomainWarmingService
  * @typedef {import('./email-renderer').MemberLike} MemberLike
- * @typedef {object} JobsService
+ * @typedef {import('../jobs-service/jobs-service').JobsService} JobsService
  * @typedef {object} Email
  * @typedef {object} Newsletter
  * @typedef {object} Post
@@ -33,7 +34,6 @@ class BatchSendingService {
   #models;
   #db;
   #sentry;
-  #debugStorageFilePath;
   #getRequiredUrlRelations;
   #shuttingDown = false;
   #inFlight = new Set();
@@ -68,7 +68,6 @@ class BatchSendingService {
    * @param {object} [dependencies.BEFORE_RETRY_CONFIG]
    * @param {object} [dependencies.AFTER_RETRY_CONFIG]
    * @param {object} [dependencies.MAILGUN_API_RETRY_CONFIG]
-   * @param {string} [dependencies.debugStorageFilePath]
    */
   constructor({
     emailRenderer,
@@ -83,7 +82,6 @@ class BatchSendingService {
     BEFORE_RETRY_CONFIG,
     AFTER_RETRY_CONFIG,
     MAILGUN_API_RETRY_CONFIG,
-    debugStorageFilePath,
   }) {
     this.#emailRenderer = emailRenderer;
     this.#sendingService = sendingService;
@@ -93,7 +91,6 @@ class BatchSendingService {
     this.#models = models;
     this.#db = db;
     this.#sentry = sentry;
-    this.#debugStorageFilePath = debugStorageFilePath;
     this.#getRequiredUrlRelations = getRequiredUrlRelations;
 
     if (BEFORE_RETRY_CONFIG) {
@@ -192,23 +189,20 @@ class BatchSendingService {
   }
 
   /**
-   * Schedules a background job that sends the email in the background if it is pending or failed.
+   * Dispatches the job that sends the email; the job itself only proceeds if the email
+   * is pending or failed.
+   * Resolves when dispatch completes, not when the email is sent.
    * @param {Email} email
-   * @returns {void}
+   * @returns {Promise<void>}
    */
-  scheduleEmail(email) {
+  async scheduleEmail(email) {
+    await this.#jobsService.dispatch(new SendEmailJob({ emailId: email.id }));
     logging.info(`[Background Job] batch-sending-service-job queued for email ${email.id}`);
-    return this.#jobsService.addJob({
-      name: 'batch-sending-service-job',
-      job: this.emailJob.bind(this),
-      data: { emailId: email.id },
-      offloaded: false,
-    });
   }
 
   /**
-   * @private
-   * @param {{emailId: string}} data Data passed from the job service. We only need the emailId because we need to refetch the email anyway to make sure the status is right and 'locked'.
+   * Sends an email after refetching it and acquiring its status lock.
+   * @param {{emailId: string}} data Identifier of the email to refetch and lock.
    */
   async emailJob({ emailId }) {
     logging.info(`[Background Job] batch-sending-service-job started for email ${emailId}`);
@@ -217,6 +211,7 @@ class BatchSendingService {
 
     // Check if email is 'pending' only + change status to submitting in one transaction.
     // This allows us to have a lock around the email job that makes sure an email can only have one active job.
+    // Also stamps updated_at, which SendingStatusService reads as the attempt start; do not save the Email once batches submit.
     let email;
     try {
       email = await this.retryDb(
@@ -273,6 +268,7 @@ class BatchSendingService {
         { ...this.#getAfterRetryConfig(), description: `email ${emailId} -> submitted` },
       );
       logging.info(
+        { system: { event: 'send_email.submitted', email_id: emailId } },
         `[Background Job] batch-sending-service-job completed for email ${emailId} in ${Date.now() - startTime}ms`,
       );
     } catch (e) {
@@ -708,6 +704,7 @@ class BatchSendingService {
     const deliveryTimes = this.calculateDeliveryTimes(email, batches.length);
 
     // Loop batches and send them via the EmailProvider
+    // SendingStatusService treats a batch that fails in this run as finished work; never re-queue it within the run.
     let succeededCount = 0;
     const queue = batches.slice();
 
@@ -822,7 +819,7 @@ class BatchSendingService {
     let succeeded = false;
 
     try {
-      let members = await this.retryDb(
+      const members = await this.retryDb(
         async () => {
           const m = await this.getBatchMembers(batch.id);
 
@@ -960,7 +957,7 @@ class BatchSendingService {
    * @returns {Promise<MemberLike[]>}
    */
   async getBatchMembers(batchId) {
-    let models = await this.#models.EmailRecipient.findAll({
+    const models = await this.#models.EmailRecipient.findAll({
       filter: `batch_id:'${batchId}'`,
       withRelated: ['member', 'member.stripeSubscriptions', 'member.products'],
     });

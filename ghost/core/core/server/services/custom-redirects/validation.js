@@ -5,7 +5,7 @@ const errors = require('@tryghost/errors');
 const messages = {
   redirectsWrongFormat: 'Incorrect redirects file format.',
   invalidRedirectsFromRegex: 'Incorrect RegEx in redirects file.',
-  redirectsHelp: 'https://ghost.org/docs/themes/routing/#redirects',
+  redirectsHelp: 'https://docs.ghost.org/themes/routing/#redirects',
 };
 
 /**
@@ -16,7 +16,7 @@ const messages = {
  * @param {import('@tryghost/adapter-base-redirects').RedirectConfig[]} redirects
  */
 const validate = (redirects) => {
-  if (!_.isArray(redirects)) {
+  if (!Array.isArray(redirects)) {
     throw new errors.ValidationError({
       message: tpl(messages.redirectsWrongFormat),
       help: tpl(messages.redirectsHelp),

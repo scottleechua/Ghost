@@ -2,8 +2,8 @@ const http = require('http');
 
 module.exports = {
   invoke: function (app, reqParams) {
-    let req = new http.IncomingMessage();
-    let res = new http.ServerResponse({
+    const req = new http.IncomingMessage();
+    const res = new http.ServerResponse({
       method: reqParams.method,
     });
 
@@ -37,7 +37,7 @@ module.exports = {
           err: res.req.err,
           body: body,
           statusCode: res.statusCode,
-          headers: res._headers,
+          headers: res.getHeaders(),
           template: res._template,
           req: req,
           res: res,
@@ -49,7 +49,7 @@ module.exports = {
           err: res.req.err,
           body: body,
           statusCode: res.statusCode,
-          headers: res._headers,
+          headers: res.getHeaders(),
           template: res._template,
           req: req,
           res: res,

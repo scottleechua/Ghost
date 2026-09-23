@@ -40,6 +40,7 @@ const COMMENT_STATUSES_IN_REPLY_TO = [COMMENT_STATUS_PUBLISHED, COMMENT_STATUS_H
 const REPLY_PARENT_REQUIRED_COLUMNS = ['parent_id', 'post_id'];
 const IN_REPLY_TO_REQUIRED_COLUMNS = ['parent_id'];
 const OWNERSHIP_REQUIRED_COLUMNS = ['member_id'];
+const VOTE_REQUIRED_COLUMNS = ['post_id'];
 const REPORT_REQUIRED_COLUMNS = ['post_id', 'member_id', 'html', 'created_at'];
 
 function getColumnList(columns) {
@@ -354,9 +355,27 @@ class CommentsService {
     this.checkCommentAccess(memberModel);
 
     return await this.#withTransaction(options, async (transactionOptions) => {
-      await this.#getPublishedCommentForAction(commentId, transactionOptions, [], {
-        forUpdate: true,
-      });
+      const comment = await this.#getPublishedCommentForAction(
+        commentId,
+        transactionOptions,
+        VOTE_REQUIRED_COLUMNS,
+        {
+          forUpdate: true,
+        },
+      );
+
+      const postModel = await this.models.Post.findOne(
+        {
+          id: comment.get('post_id'),
+        },
+        {
+          require: true,
+          ...transactionOptions,
+          withRelated: ['tiers'],
+        },
+      );
+
+      this.checkPostAccess(postModel, memberModel);
 
       const votes = await this.#getMemberCommentVotes(
         {

@@ -13,7 +13,6 @@ const color_to_rgba = require('../../../../../core/frontend/helpers/color_to_rgb
 const contrast_text_color = require('../../../../../core/frontend/helpers/contrast_text_color');
 const json = require('../../../../../core/frontend/helpers/json');
 const { setupI18nTest, initLocale } = require('../../../../utils/i18n-test-utils');
-const { deferred } = require('../../../../utils/deferred');
 
 describe('Private Controller', function () {
   let res;
@@ -24,9 +23,9 @@ describe('Private Controller', function () {
   // Helper function to prevent unit tests
   // from failing via timeout when they
   // should just immediately fail
-  function failTest(done) {
+  function failTest(reject) {
     return function (err) {
-      done(err);
+      reject(err);
     };
   }
 
@@ -67,42 +66,42 @@ describe('Private Controller', function () {
   });
 
   it('Should render default password page when theme has no password template', function () {
-    const { promise, done } = deferred();
+    const { promise, resolve, reject } = Promise.withResolvers();
     res.render = function (view, context) {
       assert.equal(view, defaultPath);
       assertExists(context);
-      done();
+      resolve();
     };
 
-    privateController.renderer(req, res, failTest(done));
+    privateController.renderer(req, res, failTest(reject));
     return promise;
   });
 
   it('Should render theme password page when it exists', function () {
-    const { promise, done } = deferred();
+    const { promise, resolve, reject } = Promise.withResolvers();
     hasTemplateStub.withArgs('private').returns(true);
 
     res.render = function (view, context) {
       assert.equal(view, 'private');
       assertExists(context);
-      done();
+      resolve();
     };
 
-    privateController.renderer(req, res, failTest(done));
+    privateController.renderer(req, res, failTest(reject));
     return promise;
   });
 
   it('Should render with error when error is passed in', function () {
-    const { promise, done } = deferred();
+    const { promise, resolve, reject } = Promise.withResolvers();
     res.error = 'Test Error';
 
     res.render = function (view, context) {
       assert.equal(view, defaultPath);
       assert.deepEqual(context, { error: 'Test Error' });
-      done();
+      resolve();
     };
 
-    privateController.renderer(req, res, failTest(done));
+    privateController.renderer(req, res, failTest(reject));
     return promise;
   });
 });
@@ -254,6 +253,32 @@ describe('private.hbs template translation', function () {
         assert(html.includes('Enter access code'));
         assert(html.includes('id="gh-private-config"'));
         assert(html.includes('src="/private.js"'));
+      });
+
+      it('renders the access-code form instead of the signup form for an authenticated member', function () {
+        const context = {
+          member: { email: 'member@example.com' },
+          site: {
+            title: 'Test',
+            url: 'http://test.local',
+            locale: 'en',
+            allow_self_signup: true,
+            admin_url: 'http://test.local/ghost/',
+          },
+        };
+        const html = renderPrivateTemplate(context);
+
+        assertExists(html);
+        assert(!html.includes('data-ghost-private-subscribe-form'));
+        assert.equal(
+          (html.match(/<form class="gh-signin gh-private-signin gh-private-access-form"/g) || [])
+            .length,
+          1,
+        );
+        assert(html.includes('placeholder="Access code"'));
+        assert(html.includes('type="submit"'));
+        assert(!html.includes('id="access"'));
+        assert(!html.includes('data-ghost-private-trigger'));
       });
 
       it('uses the site accent color for the signup button when available', function () {

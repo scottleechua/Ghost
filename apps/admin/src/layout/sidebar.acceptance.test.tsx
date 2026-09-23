@@ -4,6 +4,7 @@ import type { StateBridge } from '@/ember-bridge';
 import {
   activeThemeResponse,
   allowUnhandledRequests,
+  configResponse,
   currentRoute,
   fakeAdminEndpoint,
   fakeEndpoint,
@@ -55,6 +56,78 @@ afterEach(() => {
 });
 
 describe('Sidebar navigation', () => {
+  it('renders navigation without waiting for Labs config', async () => {
+    fakeTags([]);
+    let resolveConfig!: (value: ReturnType<typeof configResponse>) => void;
+    const pendingConfig = new Promise<ReturnType<typeof configResponse>>((resolve) => {
+      resolveConfig = resolve;
+    });
+
+    await renderAdminApp('/tags', {
+      boot: { browseConfig: { response: () => pendingConfig } },
+    });
+
+    await expect.element(sidebarScreen.shellNav()).toBeVisible();
+
+    resolveConfig(configResponse());
+  });
+
+  it('renders navigation when config cannot be loaded', async () => {
+    fakeTags([]);
+    await renderAdminApp('/tags', {
+      boot: {
+        browseConfig: {
+          response: { errors: [{ message: 'Config unavailable' }] },
+          responseStatus: 400,
+        },
+      },
+    });
+
+    await expect.element(sidebarScreen.shellNav()).toBeVisible();
+  });
+
+  it('renders navigation when accessibility JSON is malformed', async () => {
+    fakeTags([]);
+    const me = currentUserResponse();
+    me.users[0].accessibility = '{invalid json';
+
+    await renderAdminApp('/tags', { boot: { browseMe: { response: me } } });
+
+    await expect.element(sidebarScreen.shellNav()).toBeVisible();
+  });
+
+  it('uses the static shell without reading the saved menu visibility', async () => {
+    fakeTags([]);
+    const me = currentUserResponse();
+    me.users[0].accessibility = JSON.stringify({
+      navigation: { expanded: { posts: true, members: true }, menu: { visible: false } },
+      nightShift: 'light',
+    });
+
+    await renderAdminApp('/tags', { boot: { browseMe: { response: me } } });
+
+    await expect.element(sidebarScreen.shellNav()).toBeVisible();
+    expect(document.querySelector('[aria-label="Hide sidebar"]')).toBeNull();
+  });
+
+  it('keeps the boot loader visible until React commits its mount marker', async () => {
+    await renderAdminApp('/site');
+
+    const marker = document.querySelector<HTMLElement>('[data-react-admin-mounted]')!;
+    const emberApp = document.getElementById('ember-app')!;
+    const bridgeHost = emberApp.parentElement!;
+
+    try {
+      document.body.appendChild(emberApp);
+      expect(getComputedStyle(emberApp).visibility).toBe('hidden');
+      marker.removeAttribute('data-react-admin-mounted');
+      expect(getComputedStyle(emberApp).visibility).toBe('visible');
+    } finally {
+      marker.setAttribute('data-react-admin-mounted', '');
+      bridgeHost.appendChild(emberApp);
+    }
+  });
+
   it('renders the navigation for the current user', async () => {
     await renderAdminApp('/site');
 
@@ -286,7 +359,7 @@ describe('Network notification badge', () => {
 describe('Theme error notification', () => {
   const DEPRECATED_HELPER_ERROR = {
     code: 'GS001-DEPR-PURL',
-    rule: 'Replace deprecated helper',
+    rule: 'Replace deprecated <code>{{pageUrl}}</code> helper',
     details: 'The <code>{{pageUrl}}</code> helper has been deprecated.',
     failures: [{ ref: 'default.hbs', message: 'deprecated usage' }],
     fatal: false,
@@ -298,7 +371,7 @@ describe('Theme error notification', () => {
     code: 'GS110-NO-MISSING-PAGE-BUILDER-USAGE',
     rule: 'Check page builder usage',
     details: 'Missing page builder helper usage.',
-    failures: [{ ref: 'post.hbs', message: 'show_title_and_feature_image' }],
+    failures: [{ ref: 'post.hbs', message: '{{@page.show_title_and_feature_image}} is not used' }],
     fatal: false,
     level: 'error',
   };
@@ -313,19 +386,51 @@ describe('Theme error notification', () => {
     await expect.element(sidebarScreen.themeErrorsBanner()).toBeVisible();
   });
 
-  it('opens the theme errors dialog when the banner is clicked', async () => {
+  it('shows formatted theme issues and expandable details when the banner is clicked', async () => {
     await renderAdminApp('/site', {
       boot: {
-        browseActiveTheme: { response: activeThemeResponse({ errors: [DEPRECATED_HELPER_ERROR] }) },
+        browseActiveTheme: {
+          response: activeThemeResponse({
+            errors: [DEPRECATED_HELPER_ERROR],
+            warnings: [
+              {
+                code: 'GS001-DEPR-TWITTER-URL',
+                rule: 'Replace <code>{{twitter_url}}</code>',
+                details: 'Use the social_url helper.',
+                failures: [],
+                fatal: false,
+                level: 'warning',
+              },
+            ],
+          }),
+        },
       },
     });
 
     await sidebarScreen.themeErrorsBanner().click();
 
-    await expect.element(sidebarScreen.themeErrorsDialog()).toBeVisible();
-    await expect
-      .element(sidebarScreen.themeErrorsDialog())
-      .toHaveTextContent('Replace deprecated helper');
+    const dialog = sidebarScreen.themeErrorsDialog();
+    await expect.element(dialog).toBeVisible();
+    await expect.element(dialog).toHaveTextContent('1 error, 1 warning');
+    await expect.element(dialog).toHaveTextContent('Replace deprecated {{pageUrl}} helper');
+    await expect.element(dialog).not.toHaveTextContent('<code>');
+
+    const error = dialog.getByRole('button', { name: /GS001-DEPR-PURL/ });
+    const warning = dialog.getByRole('button', { name: /GS001-DEPR-TWITTER-URL/ });
+    await expect.element(error).toHaveAttribute('aria-expanded', 'false');
+    await expect.element(warning).toHaveAttribute('aria-expanded', 'false');
+    expect(error.element().querySelector('code')?.textContent).toBe('{{pageUrl}}');
+
+    await error.click();
+    await expect.element(dialog).toHaveTextContent('The {{pageUrl}} helper has been deprecated.');
+    await expect.element(dialog).toHaveTextContent('Affected files');
+    await expect.element(dialog).toHaveTextContent('default.hbs: deprecated usage');
+    await warning.click();
+    await expect.element(dialog).toHaveTextContent('Use the social_url helper.');
+    await expect.element(error).toHaveAttribute('aria-expanded', 'true');
+
+    await dialog.getByRole('button', { name: 'OK', exact: true }).click();
+    await expect.element(dialog).not.toBeInTheDocument();
   });
 
   it('shows no banner when the active theme has no errors', async () => {

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { PORT_FIELD, STRIPE_PORT } from '@tryghost/checkout';
 
 const { agentProvider, fixtureManager, mockManager } = require('../../utils/e2e-framework');
 const models = require('../../../core/server/models');
@@ -15,16 +16,16 @@ describe('Tier Checkout Admin API', function () {
 
   async function createField(field: { name: string; type?: string }) {
     const { body } = await agent
-      .post('members/custom_fields/')
-      .body({ members_custom_fields: [{ type: 'short_text', ...field }] })
+      .post('members/metafields/custom/')
+      .body({ members_metafields: [{ type: 'short_text', ...field }] })
       .expectStatus(201);
-    return body.members_custom_fields[0];
+    return body.members_metafields[0];
   }
 
   async function setStatus(key: string, status: 'active' | 'archived') {
     await agent
-      .put(`members/custom_fields/${key}/`)
-      .body({ members_custom_fields: [{ status }] })
+      .put(`members/metafields/custom/${key}/`)
+      .body({ members_metafields: [{ status }] })
       .expectStatus(200);
   }
 
@@ -61,15 +62,15 @@ describe('Tier Checkout Admin API', function () {
   });
 
   beforeEach(function () {
-    mockManager.mockLabsEnabled('membersCustomFields');
+    mockManager.mockLabsEnabled('stripeCheckoutCollection');
   });
 
   afterEach(async function () {
     mockManager.restore();
     await models.Base.knex('products_checkout_fields').del();
     await models.Base.knex('products_checkout_config').del();
-    await models.Base.knex('members_custom_field_bindings').del();
-    await models.Base.knex('members_custom_fields').del();
+    await models.Base.knex('members_metafield_bindings').del();
+    await models.Base.knex('members_metafields').del();
     // The history outlives the fields it describes, which is the point of it — but across
     // tests in one file it would leave each one reading the ones before.
     await models.Base.knex('actions').where('resource_type', 'member_custom_field').del();
@@ -235,9 +236,9 @@ describe('Tier Checkout Admin API', function () {
         address: { custom_field_key: 'shipping_address' },
       });
 
-      const { body } = await agent.get('members/custom_fields/').expectStatus(200);
+      const { body } = await agent.get('members/metafields/custom/').expectStatus(200);
       assert.deepEqual(
-        body.members_custom_fields.map((field: { name: string; type: string }) => [
+        body.members_metafields.map((field: { name: string; type: string }) => [
           field.name,
           field.type,
         ]),
@@ -264,9 +265,9 @@ describe('Tier Checkout Admin API', function () {
       await setCheckout({ shipping: { collect: false } });
       await setCheckout(collect);
 
-      const { body } = await agent.get('members/custom_fields/').expectStatus(200);
+      const { body } = await agent.get('members/metafields/custom/').expectStatus(200);
       assert.deepEqual(
-        body.members_custom_fields.map((field: { key: string }) => field.key),
+        body.members_metafields.map((field: { key: string }) => field.key),
         ['shipping_name', 'shipping_address'],
       );
       assert.equal(
@@ -284,9 +285,9 @@ describe('Tier Checkout Admin API', function () {
 
       await setCheckout(shipping(), 422);
 
-      const { body } = await agent.get('members/custom_fields/').expectStatus(200);
+      const { body } = await agent.get('members/metafields/custom/').expectStatus(200);
       assert.deepEqual(
-        body.members_custom_fields.map((field: { key: string }) => field.key),
+        body.members_metafields.map((field: { key: string }) => field.key),
         ['shipping_address'],
         'and nothing was made under a numbered label instead',
       );
@@ -306,16 +307,16 @@ describe('Tier Checkout Admin API', function () {
       };
       await setCheckout(collect);
       await agent
-        .put('members/custom_fields/shipping_address/')
-        .body({ members_custom_fields: [{ name: 'Delivery address' }] })
+        .put('members/metafields/custom/shipping_address/')
+        .body({ members_metafields: [{ name: 'Delivery address' }] })
         .expectStatus(200);
 
       await setCheckout({ shipping: { collect: false } });
       await setCheckout(collect);
 
-      const { body } = await agent.get('members/custom_fields/').expectStatus(200);
+      const { body } = await agent.get('members/metafields/custom/').expectStatus(200);
       assert.deepEqual(
-        body.members_custom_fields
+        body.members_metafields
           .filter((field: { type: string }) => field.type === 'address')
           .map((field: { key: string; name: string }) => [field.key, field.name]),
         [['shipping_address', 'Delivery address']],
@@ -331,9 +332,9 @@ describe('Tier Checkout Admin API', function () {
 
       await setCheckout(shipping({ address: { custom_field_key: theirs.key } }));
 
-      const { body } = await agent.get('members/custom_fields/').expectStatus(200);
+      const { body } = await agent.get('members/metafields/custom/').expectStatus(200);
       assert.equal(
-        body.members_custom_fields.filter((field: { type: string }) => field.type === 'address')
+        body.members_metafields.filter((field: { type: string }) => field.type === 'address')
           .length,
         1,
         'nothing was made beside it',
@@ -352,7 +353,7 @@ describe('Tier Checkout Admin API', function () {
       assert.match(body.errors[0].context, /archived/);
 
       assert.deepEqual(
-        await models.Base.knex('members_custom_field_bindings').select(),
+        await models.Base.knex('members_metafield_bindings').select(),
         [],
         'and nothing was bound',
       );
@@ -404,9 +405,9 @@ describe('Tier Checkout Admin API', function () {
     it('makes a field for the phone number under its own name', async function () {
       await setCheckout({ phone: { collect: true, custom_field_key: 'shipping_phone' } });
 
-      const { body } = await agent.get('members/custom_fields/').expectStatus(200);
+      const { body } = await agent.get('members/metafields/custom/').expectStatus(200);
       assert.deepEqual(
-        body.members_custom_fields.map((field: { key: string; name: string; type: string }) => [
+        body.members_metafields.map((field: { key: string; name: string; type: string }) => [
           field.key,
           field.name,
           field.type,
@@ -429,14 +430,14 @@ describe('Tier Checkout Admin API', function () {
 
       await setCheckout(shipping({ address: { custom_field_key: theirs.key } }), 422);
 
-      const { body } = await agent.get('members/custom_fields/').expectStatus(200);
+      const { body } = await agent.get('members/metafields/custom/').expectStatus(200);
       assert.deepEqual(
-        body.members_custom_fields.map((field: { key: string }) => field.key),
+        body.members_metafields.map((field: { key: string }) => field.key),
         [theirs.key],
         'the field made for the recipient went back with the request',
       );
       assert.deepEqual(
-        await models.Base.knex('members_custom_field_bindings').select(),
+        await models.Base.knex('members_metafield_bindings').select(),
         [],
         'and so did the binding made before it',
       );
@@ -448,9 +449,9 @@ describe('Tier Checkout Admin API', function () {
 
       await setCheckout(shipping({ name: { custom_field_key: 'recipient' } }));
 
-      const { body } = await agent.get('members/custom_fields/').expectStatus(200);
+      const { body } = await agent.get('members/metafields/custom/').expectStatus(200);
       assert.deepEqual(
-        body.members_custom_fields.map((field: { key: string }) => field.key),
+        body.members_metafields.map((field: { key: string }) => field.key),
         ['recipient', 'delivery_address'],
       );
     });
@@ -473,7 +474,7 @@ describe('Tier Checkout Admin API', function () {
       await setCheckout(shipping({ address: { custom_field_key: '' } }), 422);
       await setCheckout({ phone: { collect: true } }, 422);
 
-      assert.deepEqual(await models.Base.knex('members_custom_field_bindings').select(), []);
+      assert.deepEqual(await models.Base.knex('members_metafield_bindings').select(), []);
     });
 
     // The destination is site-wide, so it is one answer however many tiers collect it.
@@ -543,9 +544,9 @@ describe('Tier Checkout Admin API', function () {
       });
 
       const { body } = await agent
-        .get('members/custom_fields/?filter=status:[active,archived]')
+        .get('members/metafields/custom/?filter=status:[active,archived]')
         .expectStatus(200);
-      const named = body.members_custom_fields.filter(
+      const named = body.members_metafields.filter(
         (field: { key: string }) => field.key === 'contact',
       );
       assert.equal(named.length, 1, 'the key both ports named was made once');
@@ -563,7 +564,7 @@ describe('Tier Checkout Admin API', function () {
       );
       assert.match(body.errors[0].context, /lowercase letters, numbers and underscores/);
 
-      assert.deepEqual(await models.Base.knex('members_custom_fields').select(), []);
+      assert.deepEqual(await models.Base.knex('members_metafields').select(), []);
     });
 
     // A key is a property name on the plain object a member's values travel as, so one
@@ -576,7 +577,7 @@ describe('Tier Checkout Admin API', function () {
         assert.match(body.errors[0].context, /cannot be used as a custom field key/);
       }
 
-      assert.deepEqual(await models.Base.knex('members_custom_fields').select(), []);
+      assert.deepEqual(await models.Base.knex('members_metafields').select(), []);
     });
 
     // Minting holds back room for a numbering suffix; a stated key is written as given,
@@ -588,7 +589,7 @@ describe('Tier Checkout Admin API', function () {
       );
       assert.match(body.errors[0].context, /at most 191 characters/);
 
-      assert.deepEqual(await models.Base.knex('members_custom_fields').select(), []);
+      assert.deepEqual(await models.Base.knex('members_metafields').select(), []);
     });
 
     // Which kinds of thing exist is the request schema's to state, so naming one that
@@ -646,11 +647,11 @@ describe('Tier Checkout Admin API', function () {
 
       assert.deepEqual((await readCheckout()).tax_number, { collect: true });
 
-      const { body } = await agent.get('members/custom_fields/').expectStatus(200);
-      assert.deepEqual(body.members_custom_fields, [], 'no field was made for it');
+      const { body } = await agent.get('members/metafields/custom/').expectStatus(200);
+      assert.deepEqual(body.members_metafields, [], 'no field was made for it');
 
       assert.deepEqual(
-        await models.Base.knex('members_custom_field_bindings').select(),
+        await models.Base.knex('members_metafield_bindings').select(),
         [],
         'and nothing was bound',
       );
@@ -710,7 +711,7 @@ describe('Tier Checkout Admin API', function () {
       await setCheckout({ custom_fields: [{ key: size.key }] });
 
       await setStatus(size.key, 'archived');
-      await agent.delete(`members/custom_fields/${size.key}/`).expectStatus(204);
+      await agent.delete(`members/metafields/custom/${size.key}/`).expectStatus(204);
 
       assert.deepEqual((await readCheckout()).custom_fields, []);
     });
@@ -753,7 +754,7 @@ describe('Tier Checkout Admin API', function () {
     // whether anything is collected, so one left behind changes nothing.
     it('collects nothing when only the options row is left', async function () {
       await collectShipping();
-      await models.Base.knex('members_custom_field_bindings').del();
+      await models.Base.knex('members_metafield_bindings').del();
 
       const [options] = await models.Base.knex('products_checkout_config').select();
       assert.ok(options, 'the options row outlived the collection');
@@ -765,13 +766,13 @@ describe('Tier Checkout Admin API', function () {
       // Deleting takes archiving first, which is the API's own rule; the cascade below
       // is the database's, and it is what a hand-written DELETE would hit too.
       await setStatus('delivery_address', 'archived');
-      await agent.delete('members/custom_fields/delivery_address/').expectStatus(204);
+      await agent.delete('members/metafields/custom/delivery_address/').expectStatus(204);
 
       // Cascade, so no binding can name a field that is gone. The recipient's name is
       // kept elsewhere, so its binding survives — but a recipient with nowhere to send
       // the parcel is not a delivery, so the tier reports collecting nothing.
       assert.deepEqual(
-        (await models.Base.knex('members_custom_field_bindings').select()).map(
+        (await models.Base.knex('members_metafield_bindings').select()).map(
           (row: { port: string }) => row.port,
         ),
         ['shipping_name'],
@@ -785,10 +786,10 @@ describe('Tier Checkout Admin API', function () {
 
       // Archiving is reversible, so the binding waits rather than being torn out, and
       // the tier goes on reporting where the value goes.
-      const [binding] = await models.Base.knex('members_custom_field_bindings')
+      const [binding] = await models.Base.knex('members_metafield_bindings')
         .where('port', 'shipping_address')
         .select();
-      assert.equal(binding.custom_field_key, 'delivery_address');
+      assert.equal(binding.metafield_key, 'delivery_address');
       assert.equal((await readCheckout()).shipping.address.custom_field_key, 'delivery_address');
 
       await setStatus('delivery_address', 'active');
@@ -877,7 +878,7 @@ describe('Tier Checkout Admin API', function () {
   // rest of it.
   describe('When collection stops', function () {
     const bindingsFor = (port: string) =>
-      models.Base.knex('members_custom_field_bindings').where('port', port).select();
+      models.Base.knex('members_metafield_bindings').where('port', port).select();
 
     it('forgets the binding rather than keeping it switched off', async function () {
       await createField({ name: 'Delivery address', type: 'address' });
@@ -885,7 +886,7 @@ describe('Tier Checkout Admin API', function () {
 
       await setCheckout({ shipping: { collect: false } });
 
-      assert.deepEqual(await models.Base.knex('members_custom_field_bindings').select(), []);
+      assert.deepEqual(await models.Base.knex('members_metafield_bindings').select(), []);
       assert.deepEqual(await readCheckout(), { tier_id: tierId, custom_fields: [] });
     });
 
@@ -901,7 +902,7 @@ describe('Tier Checkout Admin API', function () {
       });
       await setCheckout({ shipping: { collect: false } });
       await setStatus('shipping_address', 'archived');
-      await agent.delete('members/custom_fields/shipping_address/').expectStatus(204);
+      await agent.delete('members/metafields/custom/shipping_address/').expectStatus(204);
 
       await setCheckout({
         shipping: {
@@ -973,9 +974,7 @@ describe('Tier Checkout Admin API', function () {
         .expectStatus(422);
 
       assert.deepEqual(
-        await models.Base.knex('members_custom_field_bindings')
-          .where('product_id', secondId)
-          .select(),
+        await models.Base.knex('members_metafield_bindings').where('product_id', secondId).select(),
         [],
       );
 
@@ -990,10 +989,10 @@ describe('Tier Checkout Admin API', function () {
         .expectStatus(200);
 
       const { body: fields } = await agent
-        .get('members/custom_fields/?filter=status:[active,archived]')
+        .get('members/metafields/custom/?filter=status:[active,archived]')
         .expectStatus(200);
       assert.deepEqual(
-        fields.members_custom_fields
+        fields.members_metafields
           .filter((field: { type: string }) => field.type === 'address')
           .map((field: { key: string }) => field.key),
         ['delivery_address'],
@@ -1043,12 +1042,12 @@ describe('Tier Checkout Admin API', function () {
       await setCheckout({ shipping: { collect: false } });
 
       // Off, so the tier reports nothing and the checkout asks for nothing.
-      assert.deepEqual(await models.Base.knex('members_custom_field_bindings').select(), []);
+      assert.deepEqual(await models.Base.knex('members_metafield_bindings').select(), []);
       assert.deepEqual(await readCheckout(), { tier_id: tierId, custom_fields: [] });
 
-      const { body } = await agent.get('members/custom_fields/').expectStatus(200);
+      const { body } = await agent.get('members/metafields/custom/').expectStatus(200);
       assert.deepEqual(
-        body.members_custom_fields.map((field: { key: string }) => field.key),
+        body.members_metafields.map((field: { key: string }) => field.key),
         ['delivery_address', 'shipping_name'],
         'the fields it collected into are still there',
       );
@@ -1082,17 +1081,107 @@ describe('Tier Checkout Admin API', function () {
     // Reading is open, because a tier that collects nothing reads the same either way and
     // the checkout has to build its session whatever the flag says. Configuring is not.
     it('still reads with the flag off', async function () {
-      mockManager.mockLabsDisabled('membersCustomFields');
+      mockManager.mockLabsDisabled('stripeCheckoutCollection');
       const { body } = await agent.get(`tiers/${tierId}/checkout_config/`).expectStatus(200);
       assert.deepEqual(body.tiers_checkout_config[0].custom_fields, []);
     });
 
     it('cannot be configured with the flag off', async function () {
-      mockManager.mockLabsDisabled('membersCustomFields');
+      mockManager.mockLabsDisabled('stripeCheckoutCollection');
       await agent
         .put(`tiers/${tierId}/checkout_config/`)
         .body({ tiers_checkout_config: [{ custom_fields: [] }] })
         .expectStatus(404);
+    });
+
+    it('provisions the destination fields when they cannot be managed', async function () {
+      mockManager.mockLabsDisabled('membersCustomFields');
+      await agent
+        .put(`tiers/${tierId}/checkout_config/`)
+        .body({
+          tiers_checkout_config: [
+            {
+              shipping: {
+                collect: true,
+                name: { custom_field_key: PORT_FIELD[STRIPE_PORT.shippingName].key },
+                address: { custom_field_key: PORT_FIELD[STRIPE_PORT.shippingAddress].key },
+              },
+            },
+          ],
+        })
+        .expectStatus(200);
+
+      const { body } = await agent.get('members/metafields/custom/').expectStatus(200);
+      assert.deepEqual(
+        body.members_metafields.map((f: { key: string; name: string; type: string }) => ({
+          key: f.key,
+          name: f.name,
+          type: f.type,
+        })),
+        [
+          { key: 'shipping_name', name: 'Shipping Name', type: 'short_text' },
+          { key: 'shipping_address', name: 'Shipping Address', type: 'address' },
+        ],
+      );
+    });
+
+    it('provisions them as the member’s own to read and change', async function () {
+      mockManager.mockLabsDisabled('membersCustomFields');
+      await agent
+        .put(`tiers/${tierId}/checkout_config/`)
+        .body({
+          tiers_checkout_config: [
+            {
+              shipping: {
+                collect: true,
+                name: { custom_field_key: PORT_FIELD[STRIPE_PORT.shippingName].key },
+                address: { custom_field_key: PORT_FIELD[STRIPE_PORT.shippingAddress].key },
+              },
+            },
+          ],
+        })
+        .expectStatus(200);
+
+      const { body } = await agent.get('members/metafields/custom/').expectStatus(200);
+      assert.deepEqual(
+        body.members_metafields.map((f: { key: string; access: unknown }) => [f.key, f.access]),
+        [
+          ['shipping_name', { member: 'write' }],
+          ['shipping_address', { member: 'write' }],
+        ],
+      );
+    });
+
+    // The other half of the same rule: the exception covers fields this path creates,
+    // not fields it binds to. Reopening one the publisher had closed would disclose
+    // what they had deliberately kept back.
+    it('leaves an existing field’s access alone when it binds to one', async function () {
+      const existing = await createField({ name: 'Delivery notes' });
+      await agent
+        .put(`members/metafields/custom/${existing.key}/`)
+        .body({ members_metafields: [{ access: { member: 'none' } }] })
+        .expectStatus(200);
+
+      mockManager.mockLabsDisabled('membersCustomFields');
+      await agent
+        .put(`tiers/${tierId}/checkout_config/`)
+        .body({
+          tiers_checkout_config: [
+            {
+              shipping: {
+                collect: true,
+                name: { custom_field_key: existing.key },
+                address: { custom_field_key: PORT_FIELD[STRIPE_PORT.shippingAddress].key },
+              },
+            },
+          ],
+        })
+        .expectStatus(200);
+
+      const { body } = await agent
+        .get(`members/metafields/custom/${existing.key}/`)
+        .expectStatus(200);
+      assert.deepEqual(body.members_metafields[0].access, { member: 'none' });
     });
 
     // The tier resource is generally available, so this concept must not appear on it.
