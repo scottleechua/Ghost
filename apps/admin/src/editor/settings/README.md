@@ -12,15 +12,16 @@ members the sections read — rather than the whole editing handle.
 A settings field is staged as the writer changes it and committed on the gesture
 that ends the edit — a blur for a text field, the choice itself for a toggle or
 a picker. Committing is not saving: whether the value is persisted now or held
-until the writer asks for a save is the session's one save policy gate, and
+until the writer asks for a save is decided by the save engine, and
 [the session README](../session/README.md#staging-and-committing) describes it
-and the rules that hold a commit back.
+and its pending-work contract. Title, feature image, settings and body saves all
+reach the engine and use the same preparation validator.
 
 Two of the panel's sections write something that is not a settings field, so
 they have their own routes onto the session: the URL section edits the slug
 through the slug machine, and the Publish date section stages the publish time,
 which is the save engine's command target. Both are then subject to the same
-gate as everything else.
+engine policy as everything else.
 
 The meta and social-card text fields are held to the widths their columns give
 them, 300 characters for a title and 500 for a description. Past one of those
@@ -183,7 +184,8 @@ until then. Re-choosing the value already shown is not an edit and sends
 nothing. Choosing anything other than `Specific tier(s)` clears the tiers it
 granted. The tier list is every one of the site's paid
 tiers, active ones before archived, and it loads only while `Specific tier(s)`
-is the choice. Reads carry tier relations for Public, Members and Paid posts;
+is the choice. The browse is followed page by page, and the list shows once the
+last page has arrived. Reads carry tier relations for Public, Members and Paid posts;
 the free tier that comes with Public and Members reads is excluded from the
 selection, and a tier ID without type metadata is preserved. A failed tier
 lookup shows an error and a Retry action in place of the list.
@@ -286,11 +288,13 @@ The row opens the post's saved versions, and it is absent whenever there is
 nothing to show: a post that has never been saved, one with no lexical content,
 and a published or sent post that only ever went out as an email.
 
-Versions are listed newest first, each with its date in the site's timezone and
-the author who wrote it, shown with their avatar; an author the API no longer
-resolves reads as a deleted staff user. The newest carries a `Latest` label, the version that first took the
-post to published carries `Published`, and one written because the post was
-unpublished carries `Unpublished`. Selecting a version previews it — feature
+Versions are listed newest first by the millisecond the server recorded them,
+so two saved within the same second keep the order they were saved in. Each shows its date
+in the site's timezone and the author who wrote it, shown with their avatar; an
+author the API no longer resolves reads as a deleted staff user. The newest
+carries a `Latest` label, the version that first took the post to published
+carries `Published`, and one written because the post was unpublished carries
+`Unpublished`. Selecting a version previews it — feature
 image, title, the excerpt where the inline excerpt is on, and a read-only
 rendering of its body — and changes nothing about the post. The feature image
 caption is stored HTML, rendered as such and limited to the marks a caption can
