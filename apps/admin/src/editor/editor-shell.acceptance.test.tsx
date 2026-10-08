@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 import { buildLexicalParagraph } from '@tryghost/test-data';
 
@@ -17,15 +17,6 @@ const FLAG_ON = withoutAutosave({ labs: { editorReact: true } });
 const LONG_DOCUMENT = buildLexicalParagraph(
   'A long document keeps its editor controls in reach. '.repeat(500),
 );
-let originalFontSize: string;
-
-beforeEach(() => {
-  // The production Ember host sets this baseline in patterns/global.css.
-  // This suite measures the real control sizes; the acceptance host omits that stylesheet.
-  originalFontSize = document.documentElement.style.fontSize;
-  document.documentElement.style.fontSize = '62.5%';
-});
-
 function fakeLongDocument(
   postType: 'post' | 'page',
   status: 'draft' | 'published' | 'scheduled' = 'draft',
@@ -87,6 +78,35 @@ function settingsTransition() {
     );
 }
 
+/** Newsletters answer 500, which fails the header's publish inputs. */
+function failPublishInputs() {
+  fakeAdminEndpoint(
+    'GET',
+    /^\/newsletters\//,
+    { errors: [{ type: 'InternalServerError', message: 'Newsletters are unavailable.' }] },
+    { status: 500 },
+  );
+}
+
+/** Every header action lies wholly on screen and clear of the floating settings toggle. */
+function expectHeaderActionsOnScreen(buttons: number) {
+  const toggle = editorScreen.settingsToggle().element();
+  const actions = editorScreen.headerActions().getByRole('button').elements();
+  expect(actions).toHaveLength(buttons);
+  for (const action of [editorScreen.backLink('post').element(), ...actions, toggle]) {
+    const { left, top, right, bottom } = action.getBoundingClientRect();
+    expect(left).toBeGreaterThanOrEqual(0);
+    expect(top).toBeGreaterThanOrEqual(0);
+    expect(right).toBeLessThanOrEqual(window.innerWidth);
+    expect(bottom).toBeLessThanOrEqual(window.innerHeight);
+  }
+  const toggleBounds = toggle.getBoundingClientRect();
+  for (const action of actions) {
+    const { right, top } = action.getBoundingClientRect();
+    expect(right <= toggleBounds.left || top >= toggleBounds.bottom).toBe(true);
+  }
+}
+
 function expectTranslucentSurface(element: Element) {
   const style = getComputedStyle(element);
   expect(style.backgroundColor).toMatch(/(?:,\s*0\.8|\/\s*0\.8)\)$/);
@@ -95,7 +115,6 @@ function expectTranslucentSurface(element: Element) {
 }
 
 afterEach(async () => {
-  document.documentElement.style.fontSize = originalFontSize;
   await page.viewport(1280, 800);
 });
 
@@ -170,12 +189,25 @@ describe('Floating editor shell', () => {
     expect(document.activeElement).toBe(editorScreen.settingsToggle().element());
 
     const pane = editorScreen.scrollPane();
+    const settingsPane = editorScreen.settingsScrollPane();
+    const heading = editorScreen
+      .settingsSidebar()
+      .getByRole('heading', { name: 'Post settings', exact: true })
+      .element();
+    const headingBefore = heading.getBoundingClientRect();
+    const fieldsBefore = editorScreen.settingsSlug().element().getBoundingClientRect();
+    expect(settingsPane.contains(heading)).toBe(false);
     pane.scrollTo({ top: 700 });
     await expect.poll(() => pane.scrollTop).toBe(700);
-    expect(sidebar.scrollTop).toBe(0);
+    expect(settingsPane.scrollTop).toBe(0);
 
-    sidebar.scrollTo({ top: sidebar.scrollHeight });
-    await expect.poll(() => sidebar.scrollTop).toBeGreaterThan(0);
+    settingsPane.scrollTo({ top: settingsPane.scrollHeight });
+    await expect.poll(() => settingsPane.scrollTop).toBeGreaterThan(0);
+    expect(heading.getBoundingClientRect()).toEqual(headingBefore);
+    expect(editorScreen.settingsSlug().element().getBoundingClientRect().top).toBeLessThan(
+      fieldsBefore.top,
+    );
+    expect(sidebar.scrollTop).toBe(0);
     expect(pane.scrollTop).toBe(700);
     expect(editorScreen.helpLink().element().getBoundingClientRect().right).toBe(footerAfter.right);
     expect(document.documentElement.scrollHeight).toBeLessThanOrEqual(window.innerHeight);
@@ -188,19 +220,15 @@ describe('Floating editor shell', () => {
     );
   });
 
-  it.each([
-    { admin7Pill: false, theme: 'light' },
-    { admin7Pill: true, theme: 'dark' },
-  ])(
-    'keeps controls in a narrow $theme viewport (Admin 7: $admin7Pill) and overlays settings',
-    async ({ admin7Pill, theme }) => {
+  it.each(['light', 'dark'])(
+    'keeps controls in a narrow %s viewport and overlays settings',
+    async (theme) => {
       await page.viewport(390, 844);
       fakeLongDocument('post');
       const me = currentUserResponse();
       me.users[0].accessibility = JSON.stringify({ nightShift: theme });
       await renderAdminApp('/editor/post/abc123', {
         ...FLAG_ON,
-        labs: { editorReact: true, admin7Pill },
         boot: { browseMe: { response: me } },
       });
       await expect.element(editorScreen.body()).toBeVisible();
@@ -257,6 +285,32 @@ describe('Floating editor shell', () => {
       ).toBeLessThanOrEqual(window.innerHeight);
       expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(window.innerWidth);
       expect(document.documentElement.scrollHeight).toBeLessThanOrEqual(window.innerHeight);
+    },
+  );
+
+  it.each([
+    { status: 'published', inputs: 'loaded' },
+    { status: 'scheduled', inputs: 'loaded' },
+    { status: 'published', inputs: 'failed' },
+    { status: 'scheduled', inputs: 'failed' },
+  ] as const)(
+    'keeps a $status post’s actions on a narrow screen with publish inputs $inputs',
+    async ({ status, inputs }) => {
+      await page.viewport(390, 844);
+      fakeLongDocument('post', status);
+      if (inputs === 'failed') {
+        failPublishInputs();
+      }
+      await renderAdminApp('/editor/post/abc123', FLAG_ON);
+      await expect.element(editorScreen.body()).toBeVisible();
+      await expect.element(editorScreen.updateButton()).toBeVisible();
+      if (inputs === 'failed') {
+        await expect.element(editorScreen.publishInputsError()).toBeVisible();
+      }
+
+      // Unpublish or Unschedule and Update, plus Retry when the load failed.
+      expectHeaderActionsOnScreen(inputs === 'failed' ? 3 : 2);
+      expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(window.innerWidth);
     },
   );
 
@@ -412,7 +466,6 @@ describe('Floating editor shell', () => {
     fakeLongDocument('post');
     await renderAdminApp('/editor/post/abc123', {
       ...FLAG_ON,
-      labs: { editorReact: true, admin7Pill: true },
     });
     await expect.element(editorScreen.body()).toBeVisible();
     const toggle = editorScreen.settingsToggle().element();
@@ -425,7 +478,7 @@ describe('Floating editor shell', () => {
     await expect.element(editorScreen.settingsSubviewPane()).toBeVisible();
     const sidebar = editorScreen.settingsSidebar().element();
     await expect.poll(() => sidebar.getBoundingClientRect().right).toBe(window.innerWidth - 8);
-    expect(sidebar.getBoundingClientRect().width).toBe(492);
+    expect(sidebar.getBoundingClientRect().width).toBe(342);
     await expect(editorScreen.settingsToggle()).toHaveCount(1);
     expect(editorScreen.settingsToggle().element()).toBe(toggle);
     expect(toggle.getBoundingClientRect()).toEqual(toggleBefore);
@@ -438,7 +491,7 @@ describe('Floating editor shell', () => {
     expect(document.activeElement).toBe(editorScreen.settingsToggle().element());
   });
 
-  it('keeps a full-width image inside the writing pane beside normal and wide settings', async () => {
+  it('keeps a full-width image inside the writing pane beside the settings list and its subpanels', async () => {
     const imageUrl = URL.createObjectURL(
       new Blob(
         [
@@ -481,7 +534,7 @@ describe('Floating editor shell', () => {
       expect(pane.getBoundingClientRect().right).toBe(sidebar.getBoundingClientRect().left);
 
       await editorScreen.settingsSubviewRow('Code injection').click();
-      await expect.poll(() => sidebar.parentElement!.getBoundingClientRect().width).toBe(500);
+      await expect.poll(() => sidebar.parentElement!.getBoundingClientRect().width).toBe(350);
       await expect
         .poll(() => image.element().getBoundingClientRect().right)
         .toBeCloseTo(pane.getBoundingClientRect().right - 12, 0);
@@ -609,9 +662,11 @@ describe('Floating editor shell', () => {
       await editorScreen.body().click();
       await userEvent.keyboard('{End} more');
       await userEvent.keyboard('{Meta>}s{/Meta}');
-      await expect.element(editorScreen.reauthBanner()).toBeVisible();
+      await expect.element(editorScreen.reauthDialog()).toBeVisible();
+      await userEvent.keyboard('{Escape}');
+      await expect.element(editorScreen.saveErrorBanner()).toBeVisible();
 
-      const banner = editorScreen.reauthBanner().element().getBoundingClientRect();
+      const banner = editorScreen.saveErrorBanner().element().getBoundingClientRect();
       expect(banner.top).toBeGreaterThanOrEqual(headerBefore.bottom);
       expect(pane.getBoundingClientRect().top).toBeGreaterThanOrEqual(banner.bottom);
       expect(pane.clientHeight).toBeLessThan(paneHeight);
@@ -624,7 +679,7 @@ describe('Floating editor shell', () => {
 
       pane.scrollTo({ top: 700 });
       await expect.poll(() => pane.scrollTop).toBe(700);
-      expect(editorScreen.reauthBanner().element().getBoundingClientRect().top).toBe(banner.top);
+      expect(editorScreen.saveErrorBanner().element().getBoundingClientRect().top).toBe(banner.top);
       expect(document.documentElement.scrollHeight).toBeLessThanOrEqual(window.innerHeight);
       expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(window.innerWidth);
       expect(banner.left).toBeGreaterThanOrEqual(0);

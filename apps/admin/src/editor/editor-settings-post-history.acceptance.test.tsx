@@ -16,6 +16,7 @@ import {
   postRevision,
   renderAdminApp,
   settingsResponse,
+  settleTransitions,
   staffUser,
   submittedPost,
 } from '@test-utils/acceptance';
@@ -145,6 +146,8 @@ function fakeUnsavablePost() {
 async function openSidebar() {
   await editorScreen.settingsToggle().click();
   await expect.element(editorScreen.settingsSidebar()).toBeVisible();
+  // Visible from its first frame; a click while it still slides in can be lost.
+  await settleTransitions();
 }
 
 async function openHistory() {
@@ -291,6 +294,42 @@ describe('Post settings post history', () => {
       .toHaveTextContent('The very first words');
     // Selecting is a preview, not an edit: the post is untouched.
     await expect.element(editorScreen.titleInput()).toHaveValue('Hello from React');
+  });
+
+  it('does not let a card in the previewed version be selected', async () => {
+    const withCallout = postRevision({
+      ...NEWEST,
+      lexical: JSON.stringify({
+        root: {
+          children: [
+            {
+              type: 'callout',
+              version: 1,
+              calloutText: '<p><span>A callout from the past</span></p>',
+              calloutEmoji: '💡',
+              backgroundColor: 'grey',
+            },
+          ],
+          direction: null,
+          format: '',
+          indent: 0,
+          type: 'root',
+          version: 1,
+        },
+      }),
+    });
+    fakeSavablePost({ post_revisions: [withCallout] });
+    await renderAdminApp(`/editor/post/${POST_ID}`, FLAG_ON);
+    await openHistory();
+
+    const card = editorScreen.postHistoryPreviewBody().getByText('A callout from the past');
+    await expect.element(card, POLL).toBeVisible();
+
+    // Forced: an unreachable card fails Playwright's hit-target check by design.
+    await card.click({ force: true });
+    await card.click({ force: true });
+
+    expect(editorScreen.postHistoryPreviewSelectedCard()).toBeNull();
   });
 
   it('shows the version’s feature image in the preview', async () => {
@@ -467,7 +506,39 @@ describe('Post settings post history', () => {
     await expect.element(editorScreen.titleInput()).toHaveValue('Hello from React');
   });
 
-  it('releases an expired-session restore and keeps the original content', async () => {
+  it('asks for the password over the history and completes the restore once signed in', async () => {
+    fakeSavablePost();
+    const expiredApi = fakeAdminEndpoint(
+      'PUT',
+      ROUTE,
+      { errors: [{ type: 'UnauthorizedError', message: 'Please sign in again.' }] },
+      { status: 401 },
+    );
+    const sessionApi = fakeAdminEndpoint('POST', '/session/', () => 'Created', { status: 201 });
+    await renderAdminApp(`/editor/post/${POST_ID}`, FLAG_ON);
+    await openHistory();
+    await editorScreen.postHistoryRevision(1).select().click();
+    await editorScreen.postHistoryRevision(1).restore().click();
+    await editorScreen.confirmRestore().click();
+
+    await expect.element(editorScreen.reauthDialog()).toHaveTextContent('Are you still here?');
+    await expect.poll(() => expiredApi.requests.length, POLL).toBe(1);
+
+    // Saves answer again: declared after the expired fake, so it takes over from it.
+    const saveApi = fakeEditorPost(savedPost());
+    await editorScreen.reauthPassword().fill('hunter22');
+    await editorScreen.reauthSignIn().click();
+
+    await expect(editorScreen.reauthDialog()).toHaveCount(0);
+    expect(sessionApi.requests).toHaveLength(1);
+    await expect.poll(() => saveApi.requests.length, POLL).toBe(1);
+    expect(submittedPost(saveApi)).toMatchObject({ title: 'Published at last' });
+    await expect(editorScreen.postHistoryModal()).toHaveCount(0);
+    await expect.element(editorScreen.body()).toHaveTextContent('The published words');
+    await expect.element(editorScreen.titleInput()).toHaveValue('Published at last');
+  });
+
+  it('rolls back an expired-session restore when the sign-in is abandoned', async () => {
     fakeSavablePost();
     fakeAdminEndpoint(
       'PUT',
@@ -481,11 +552,13 @@ describe('Post settings post history', () => {
     await editorScreen.postHistoryRevision(1).restore().click();
     await editorScreen.confirmRestore().click();
 
+    await expect.element(editorScreen.reauthDialog()).toHaveTextContent('Are you still here?');
+    await editorScreen.cancelReauth().click();
+
+    await expect(editorScreen.reauthDialog()).toHaveCount(0);
     await expect
       .element(editorScreen.postHistoryModal().getByRole('alert'))
-      .toHaveTextContent(
-        'Your session expired. Sign in again in a new tab, then try restoring again.',
-      );
+      .toHaveTextContent('Your session expired. Restore again to sign in and continue.');
     await expect(editorScreen.restoreConfirm()).toHaveCount(0);
     await userEvent.keyboard('{Escape}');
     await expect(editorScreen.postHistoryModal()).toHaveCount(0);
@@ -541,15 +614,25 @@ describe('Post settings post history', () => {
     expect(saveApi.requests).toHaveLength(0);
   });
 
-  it('closes on Escape', async () => {
-    fakeSavablePost();
-    await renderAdminApp(`/editor/post/${POST_ID}`, FLAG_ON);
-    await openHistory();
+  it.each(['Escape', 'Close button'])(
+    'closes with %s and returns focus to the sidebar',
+    async (action) => {
+      fakeSavablePost();
+      await renderAdminApp(`/editor/post/${POST_ID}`, FLAG_ON);
+      await openHistory();
 
-    await userEvent.keyboard('{Escape}');
+      if (action === 'Escape') {
+        await userEvent.keyboard('{Escape}');
+      } else {
+        await editorScreen
+          .postHistoryModal()
+          .getByRole('button', { name: 'Close', exact: true })
+          .click();
+      }
 
-    await expect(editorScreen.postHistoryModal()).toHaveCount(0);
-    await expect.element(editorScreen.settingsPostHistory()).toBeVisible();
-    await expect.element(editorScreen.settingsPostHistory()).toHaveFocus();
-  });
+      await expect(editorScreen.postHistoryModal()).toHaveCount(0);
+      await expect.element(editorScreen.settingsPostHistory()).toBeVisible();
+      await expect.element(editorScreen.settingsPostHistory()).toHaveFocus();
+    },
+  );
 });
