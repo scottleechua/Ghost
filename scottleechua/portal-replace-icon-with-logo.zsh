@@ -15,64 +15,22 @@ if [ ! -d "$GHOST_ROOT/apps/portal" ]; then
     exit 1
 fi
 
+source "$GHOST_ROOT/scottleechua/patch-helpers.zsh" || exit 1
+
+PAGES="$GHOST_ROOT/apps/portal/src/components/pages"
+
 echo "Replacing icon with logo..."
 
-# Replace SiteIcon with SiteLogo in signup-page.js
-sed -i '' 's/SiteIcon/SiteLogo/g' "$GHOST_ROOT/apps/portal/src/components/pages/signup-page.jsx"
-sed -i '' 's/siteIcon/siteLogo/g' "$GHOST_ROOT/apps/portal/src/components/pages/signup-page.jsx"
-sed -i '' 's/site.icon/site.logo/g' "$GHOST_ROOT/apps/portal/src/components/pages/signup-page.jsx"
-
-# Replace SiteIcon with SiteLogo in signin-page.js
-sed -i '' 's/SiteIcon/SiteLogo/g' "$GHOST_ROOT/apps/portal/src/components/pages/signin-page.jsx"
-sed -i '' 's/siteIcon/siteLogo/g' "$GHOST_ROOT/apps/portal/src/components/pages/signin-page.jsx"
-sed -i '' 's/site.icon/site.logo/g' "$GHOST_ROOT/apps/portal/src/components/pages/signin-page.jsx"
+# Replace SiteIcon with SiteLogo in signup-page.jsx and signin-page.jsx
+for page in signup-page.jsx signin-page.jsx; do
+    apply_patch "Rename SiteIcon to SiteLogo" "$PAGES/$page" sed -i '' 's/SiteIcon/SiteLogo/g'
+    apply_patch "Rename siteIcon to siteLogo" "$PAGES/$page" sed -i '' 's/siteIcon/siteLogo/g'
+    apply_patch "Use site.logo instead of site.icon" "$PAGES/$page" sed -i '' 's/site\.icon/site.logo/g'
+done
 
 # Delete width = 60px
-sed -i '' '/width: 60px;/d' "$GHOST_ROOT/apps/portal/src/components/pages/signup-page.jsx"
+apply_patch "Remove fixed logo width" "$PAGES/signup-page.jsx" sed -i '' '/width: 60px;/d'
 
-# Create a temporary file with the new media query block
-TEMP_FILE=$(mktemp)
-cat > "$TEMP_FILE" << 'EOL'
-@media (max-width: 480px) {
-    .gh-portal-signup-logo {
-        height: 80px;
-        margin: 48px auto;
-    }
-EOL
-
-# Replace the media query block for .gh-portal-signup-logo using awk
-awk '
-    BEGIN { found = 0; in_block = 0 }
-    /@media \(max-width: 480px\) {/ {
-        if (found == 0) {
-            # Store the current line
-            current = $0
-            # Get the next line
-            getline next_line
-            # Check if the next line contains the exact logo class
-            if (next_line ~ /\.gh-portal-signup-logo {/) {
-                # Found our target block, print the new content
-                while ((getline < "'"$TEMP_FILE"'") > 0) {
-                    print
-                }
-                # Skip the rest of the block
-                in_block = 1
-                found = 1
-                next
-            } else {
-                # Not our target, print both lines
-                print current
-                print next_line
-            }
-            next
-        }
-    }
-    in_block && /}/ {
-        in_block = 0
-        next
-    }
-    !in_block { print }
-' "$GHOST_ROOT/apps/portal/src/components/pages/signup-page.jsx" > "$GHOST_ROOT/apps/portal/src/components/pages/signup-page.jsx.tmp" && mv "$GHOST_ROOT/apps/portal/src/components/pages/signup-page.jsx.tmp" "$GHOST_ROOT/apps/portal/src/components/pages/signup-page.jsx"
-
-# Clean up temporary file
-rm "$TEMP_FILE"
+# Replace the mobile media query block for .gh-portal-signup-logo
+apply_patch "Replace mobile logo size" "$PAGES/signup-page.jsx" \
+    perl -0pi -e 's/(\@media \(max-width: 480px\) \{\n[ \t]*\.gh-portal-signup-logo \{\n)[^}]*\}/$1        height: 80px;\n        margin: 48px auto;\n    }/'

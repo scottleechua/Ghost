@@ -18,16 +18,14 @@ fi
 # Change to portal directory
 cd "$GHOST_ROOT/apps/portal"
 
+source "$GHOST_ROOT/scottleechua/patch-helpers.zsh" || exit 1
+
 echo "Applying dark mode changes..."
 
 # Create a temporary file with the dark mode code
 TOGGLE_DARK_FILE=$(mktemp)
 cat > "$TOGGLE_DARK_FILE" << 'EOL'
-        let isParentDark = false;
-        const pageBody = window.parent.document.body;
-        if (pageBody && pageBody.classList) {
-            isParentDark = pageBody.classList.contains('dark');
-        }
+        const isParentDark = window.parent.document.documentElement.getAttribute('data-theme') === 'dark';
 EOL
 
 # Create a temporary file with the dark mode styles
@@ -56,24 +54,33 @@ cat > "$DARK_STYLES_FILE" << 'EOL'
         --white: #000;
         --whitergb: 0,0,0;
     }
+    /* The backdrop tints with --blackrgb, which is white above; keep it a dark tint */
+    html.dark .gh-portal-popup-background {
+        background: linear-gradient(315deg, rgba(0,0,0,0.4) 0%, rgba(0,0,0,0.3) 100%);
+    }
 EOL
 
-# Edit popup-modal.js to add dark mode detection
-sed -i '' -e "/const isMobile = window.innerWidth < 480;/r $TOGGLE_DARK_FILE" "$GHOST_ROOT/apps/portal/src/components/popup-modal.jsx"
-sed -i '' -e "s/dataDir={this.context.dir}/dataDir={this.context.dir}\n                    dataDark={isParentDark}/" "$GHOST_ROOT/apps/portal/src/components/popup-modal.jsx"
+COMPONENTS="$GHOST_ROOT/apps/portal/src/components"
 
-# Edit notification.js to add dark mode detection
-sed -i '' -e "/const {type, status, message, autoHide, duration, notificationCount} = this.state;/r $TOGGLE_DARK_FILE" "$GHOST_ROOT/apps/portal/src/components/notification.jsx"
-sed -i '' -e "s/testid=\"portal-notification-frame\"/testid=\"portal-notification-frame\"\n                    dataDark={isParentDark}/" "$GHOST_ROOT/apps/portal/src/components/notification.jsx"
+# Edit popup-modal.jsx to add dark mode detection
+apply_patch "Detect dark mode in popup" "$COMPONENTS/popup-modal.jsx" \
+    sed -i '' -e "/const isMobile = window.innerWidth < 480;/r $TOGGLE_DARK_FILE"
+apply_patch "Pass dark mode to popup frame" "$COMPONENTS/popup-modal.jsx" \
+    sed -i '' -e "s/dataDir={this.context.dir}/dataDir={this.context.dir}\n          dataDark={isParentDark}/"
 
-# Edit frame.js to add dark/light class
-sed -i '' -e "s/this.forceUpdate();/this.iframeHtml.classList.add(this.props.dataDark ? 'dark' : 'light');\n            this.forceUpdate();/" "$GHOST_ROOT/apps/portal/src/components/frame.jsx"
+# Edit notification.jsx to add dark mode detection
+apply_patch "Detect dark mode in notification" "$COMPONENTS/notification.jsx" \
+    sed -i '' -e "/const { type, status, message, autoHide, duration, notificationCount } = this.state;/r $TOGGLE_DARK_FILE"
+apply_patch "Pass dark mode to notification frame" "$COMPONENTS/notification.jsx" \
+    sed -i '' -e "s/testid=\"portal-notification-frame\"/testid=\"portal-notification-frame\"\n          dataDark={isParentDark}/"
 
-# Edit global.styles.js to add dark mode styles
-GLOBAL_STYLES_PATH="$GHOST_ROOT/apps/portal/src/components/global.styles.js"
-TEMP_GLOBAL_STYLES=$(mktemp)
-awk '/body {/ {system("cat '"$DARK_STYLES_FILE"'"); print; next} {print}' "$GLOBAL_STYLES_PATH" > "$TEMP_GLOBAL_STYLES"
-mv "$TEMP_GLOBAL_STYLES" "$GLOBAL_STYLES_PATH"
+# Edit frame.jsx to add dark/light class
+apply_patch "Add dark/light class to frame" "$COMPONENTS/frame.jsx" \
+    sed -i '' -e "s/this.forceUpdate();/this.iframeHtml.classList.add(this.props.dataDark ? 'dark' : 'light');\n      this.forceUpdate();/"
+
+# Edit global.styles.js to add dark mode styles before the body rule
+DARK_STYLES_FILE="$DARK_STYLES_FILE" apply_patch "Add dark mode palette" "$COMPONENTS/global.styles.js" \
+    perl -0pi -e 'BEGIN { local $/; open(my $fh, "<", $ENV{DARK_STYLES_FILE}) or die; $css = <$fh>; } s/^([ \t]*body \{)$/$css$1/m'
 
 # Clean up temporary files
 rm "$TOGGLE_DARK_FILE"

@@ -1,0 +1,323 @@
+name: Portal contract check
+
+# Fork-only workflow for the scripts in scottleechua/. It keeps them working
+# against upstream TryGhost/Ghost, before the fork syncs.
+#
+# Compares upstream main with the upstream commit last checked, in
+# scottleechua/checked-upstream. When Portal, SodoSearch or the i18n files that
+# the scripts patch have changed:
+#   1. patches: scottleechua/check-patches.zsh applies every patch to upstream
+#      main and builds both apps. macOS, because the scripts use BSD sed. This
+#      job installs and runs upstream code, so its token is read-only.
+#   2. contract: Claude checks scottleechua/contract.md against the upstream
+#      diff and the patch results.
+# Safe: opens and merges a PR that updates checked-upstream. Not safe: opens an
+# issue, or comments on the open one.
+
+on:
+  schedule:
+    # Cron has no "every 2 weeks", so run on the 1st and 15th of each month.
+    - cron: '47 6 1,15 * *'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Run even if nothing changed
+        type: boolean
+        default: true
+
+concurrency:
+  group: portal-contract-check
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CHECKED: fork/scottleechua/checked-upstream
+  # What the scripts patch or depend on. A change anywhere else is not checked.
+  WATCHED: apps/portal apps/sodo-search packages/i18n/src/registry packages/i18n/locales/en
+
+jobs:
+  patches:
+    if: github.repository == 'scottleechua/Ghost'
+    runs-on: macos-latest
+    permissions:
+      contents: read
+      issues: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      WORK: ${{ github.workspace }}/portal-check
+    outputs:
+      run: ${{ steps.v.outputs.run }}
+      old: ${{ steps.v.outputs.old }}
+      new: ${{ steps.v.outputs.new }}
+      portal: ${{ steps.v.outputs.portal }}
+      search: ${{ steps.v.outputs.search }}
+      title: ${{ steps.v.outputs.title }}
+      branch: ${{ steps.v.outputs.branch }}
+      patches: ${{ steps.p.outputs.patches }}
+    steps:
+      # Upstream at the workspace root, so its pnpm workspace and setup action work.
+      # Full history without file contents, to diff from the last checked commit.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: TryGhost/Ghost
+          ref: main
+          fetch-depth: 0
+          filter: blob:none
+          persist-credentials: false
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: develop
+          path: fork
+          persist-credentials: false
+
+      - name: Compare checked and current upstream
+        id: v
+        env:
+          FORCE: ${{ github.event_name == 'workflow_dispatch' && inputs.force }}
+        run: |
+          old=$(tr -d '[:space:]' < "$CHECKED")
+          new=$(git rev-parse HEAD)
+          git cat-file -e "$old^{commit}" 2>/dev/null \
+            || { echo "::error::$CHECKED has no upstream commit (got '$old')"; exit 1; }
+
+          # One key for the content of the watched paths, so that upstream commits
+          # elsewhere do not start a new check or a new issue.
+          key() { for p in $WATCHED; do git rev-parse "$1:$p" 2>/dev/null || echo "missing:$p"; done | shasum | cut -c1-10; }
+          old_key=$(key "$old")
+          new_key=$(key "$new")
+          portal=$(jq -r .version apps/portal/package.json)
+          search=$(jq -r .version apps/sodo-search/package.json)
+
+          title="Portal contract check: Portal $portal, SodoSearch $search ($new_key)"
+          branch="portal-contract/$new_key"
+
+          run=true
+          if [ "$FORCE" = true ]; then
+            echo "Manual run with force: check even if nothing changed."
+          elif [ "$old_key" = "$new_key" ]; then
+            echo "No change in the watched paths since $old. Skip."; run=false
+          elif git -C fork ls-remote --exit-code --heads origin "$branch" >/dev/null; then
+            echo "Branch $branch exists. Skip."; run=false
+          elif [ -n "$(gh issue list -R "$GITHUB_REPOSITORY" --state all --search "\"$title\" in:title,comments" --json number -q '.[].number')" ]; then
+            echo "An issue or issue comment for this upstream state exists. Skip."; run=false
+          fi
+
+          echo "Upstream $old -> $new (watched paths $old_key -> $new_key)"
+          {
+            echo "old=$old"; echo "new=$new"
+            echo "portal=$portal"; echo "search=$search"
+            echo "title=$title"; echo "branch=$branch"
+            echo "run=$run"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Diff the watched paths
+        if: steps.v.outputs.run == 'true'
+        env:
+          OLD: ${{ steps.v.outputs.old }}
+          NEW: ${{ steps.v.outputs.new }}
+        run: |
+          mkdir -p "$WORK"
+          # Word-split on purpose: WATCHED is a list of paths.
+          git diff "$OLD" "$NEW" -- $WATCHED > "$WORK/upstream.diff"
+          git diff --stat "$OLD" "$NEW" -- $WATCHED > "$WORK/upstream.stat"
+          wc -l "$WORK/upstream.diff"
+
+      - name: Read the Node version
+        id: node
+        if: steps.v.outputs.run == 'true'
+        run: echo "version=$(cat .nvmrc)" >> "$GITHUB_OUTPUT"
+
+      - uses: ./.github/actions/setup-node-pnpm
+        if: steps.v.outputs.run == 'true'
+        with:
+          node-version: ${{ steps.node.outputs.version }}
+          install-args: --filter @tryghost/portal... --filter @tryghost/sodo-search...
+          store-cache: 'false'
+
+      - name: Apply every patch and build
+        id: p
+        if: steps.v.outputs.run == 'true'
+        run: |
+          # The scripts find the Ghost root from their own location.
+          cp -R fork/scottleechua scottleechua
+          if zsh scottleechua/check-patches.zsh "$WORK/patches"; then
+            echo "patches=PASS" >> "$GITHUB_OUTPUT"
+          else
+            echo "patches=FAIL" >> "$GITHUB_OUTPUT"
+          fi
+          git status --short -- $WATCHED
+
+      - name: Keep the diffs and patch results
+        if: steps.v.outputs.run == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: portal-patches
+          path: ${{ env.WORK }}
+          retention-days: 90
+
+  contract:
+    needs: patches
+    if: needs.patches.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      # New check issues are assigned to this user, so that GitHub notifies them.
+      ASSIGNEE: scottleechua
+      WORK: ${{ github.workspace }}/portal-check
+      OLD: ${{ needs.patches.outputs.old }}
+      NEW: ${{ needs.patches.outputs.new }}
+      PORTAL: ${{ needs.patches.outputs.portal }}
+      SEARCH: ${{ needs.patches.outputs.search }}
+      TITLE: ${{ needs.patches.outputs.title }}
+      BRANCH: ${{ needs.patches.outputs.branch }}
+      PATCHES: ${{ needs.patches.outputs.patches || 'FAIL' }}
+    steps:
+      # The same upstream commit that the patches job checked, with history for git show.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: TryGhost/Ghost
+          ref: ${{ needs.patches.outputs.new }}
+          fetch-depth: 0
+          filter: blob:none
+          persist-credentials: false
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: develop
+          path: fork
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: portal-patches
+          path: ${{ env.WORK }}
+
+      - name: Copy the scripts and contract
+        run: cp -R fork/scottleechua scottleechua
+
+      - name: Check the contract
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          claude_args: --allowedTools "Read,Grep,Glob,Write,Bash(grep:*),Bash(ls:*),Bash(head:*),Bash(wc:*),Bash(git show:*),Bash(git diff:*),Bash(git log:*)"
+          prompt: |
+            The working directory is upstream TryGhost/Ghost at ${{ env.NEW }}.
+            scottleechua/ holds a fork's scripts that patch Portal and SodoSearch
+            before building them, and the contract scottleechua/contract.md.
+            The last checked upstream commit is ${{ env.OLD }}.
+
+            In ${{ env.WORK }}/:
+              - upstream.diff and upstream.stat: the upstream changes in the
+                watched paths (${{ env.WATCHED }}) since the last check. Empty
+                on a manual run with no change.
+              - patches/: the result of scottleechua/check-patches.zsh, which
+                applied every patch with every option and built both apps.
+                Overall: ${{ env.PATCHES }}. portal.log and sodo-search.log are
+                the script output; *-patched.diff is the source after patching,
+                if the script got that far.
+
+            Check every item in scottleechua/contract.md against the new source.
+            Read the scripts that each item names. Use the patched diffs to see
+            where each patch landed, and the upstream diff and
+            `git show ${{ env.OLD }}:<path>` to compare old and new code.
+            An item whose code did not change is SAME. A failed patch in the
+            logs is BROKEN: say which upstream change caused it and how to
+            change the patch.
+
+            Use the "Build environment" section of the contract to decide if a
+            change affects these scripts.
+
+            Write the full report to ${{ env.WORK }}/report.md:
+            - First line exactly: "VERDICT: SAFE" or "VERDICT: NOT SAFE".
+              NOT SAFE if the patch check failed, if any item is BROKEN, or if
+              you cannot confirm an item. CHANGED is not BROKEN.
+            - A table: item | SAME / CHANGED / BROKEN | evidence (file:line).
+            - A short list of other upstream changes that can affect the
+              customized Portal or SodoSearch but are not in the contract, for
+              example a new page with a link button, or a new fixed color.
+
+            Also write a short summary to ${{ env.WORK }}/summary.md. It becomes
+            the GitHub issue, and a later fix starts from it, so keep only what a
+            fix needs:
+            - The same first line as report.md.
+            - For each item that is not SAME, a block in this format:
+
+              ### <item ID>: <STATUS>
+              **Takeaway:** One sentence: does this break a customization now, and which?
+              **Action:** None / the script or contract change to make.
+              **Evidence:** upstream file:line in the new version; script and apply_patch description.
+
+            - Put the BROKEN items first.
+            - No SAME items, no table, no other text. Use short sentences.
+            Do not edit any other file.
+
+      - name: Keep the report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: portal-report
+          path: |
+            ${{ env.WORK }}/report.md
+            ${{ env.WORK }}/summary.md
+          retention-days: 90
+          if-no-files-found: ignore
+
+      - name: Merge PR or open issue
+        working-directory: fork
+        run: |
+          report="$WORK/report.md"
+          summary="$WORK/summary.md"
+          run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          [ -s "$report" ] || echo "No report from the contract check. Patch check: $PATCHES." > "$report"
+          [ -s "$summary" ] || cp "$report" "$summary"
+          # The issue holds only the summary. The full report, logs and diffs are in the run.
+          { cat "$summary"; echo; echo "Full report, logs and diffs: [run $GITHUB_RUN_ID]($run_url) (artifacts \`portal-patches\` and \`portal-report\`)."; } \
+            > "$WORK/issue.md"
+
+          safe=false
+          [ "$(head -1 "$report")" = "VERDICT: SAFE" ] && [ "$PATCHES" = PASS ] && safe=true
+          checked=$(tr -d '[:space:]' < scottleechua/checked-upstream)
+
+          if [ "$safe" = true ] \
+            && { [ "$checked" = "$NEW" ] || git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null; }; then
+            # A manual run with nothing new to record, or a PR for this state
+            # exists already: put the report on the run page, not in a new PR.
+            { echo "## $TITLE"; echo; echo "No new upstream commit to record, so no PR."; echo; cat "$report"; } \
+              >> "$GITHUB_STEP_SUMMARY"
+          elif [ "$safe" = true ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898+github-actions[bot]@users.noreply.github.com"
+            git checkout -b "$BRANCH"
+            echo "$NEW" > scottleechua/checked-upstream
+            git add scottleechua/checked-upstream
+            git commit -m "Update checked upstream: Portal $PORTAL, SodoSearch $SEARCH"
+            # claude-code-action sets git up with its own app token and revokes that
+            # token when it finishes. Push with this workflow's GITHUB_TOKEN instead.
+            git config --local --unset-all http.https://github.com/.extraheader || true
+            git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+            git push origin "$BRANCH"
+            # This PR includes the changes of older open check PRs, so close them.
+            gh pr list --state open --json number,headRefName \
+              -q '.[] | select(.headRefName | startswith("portal-contract/")) | .number' \
+              | while read -r n; do gh pr close "$n" --comment "Replaced by a newer check." --delete-branch; done
+            gh pr create --base develop --head "$BRANCH" --title "$TITLE" --body-file "$report"
+            gh pr merge "$BRANCH" --merge --delete-branch
+          else
+            # While one problem is open, add new reports to it, not new issues.
+            open=$(gh issue list --state open --search '"Portal contract check" in:title' \
+              --json number -q '.[0].number')
+            if [ -n "$open" ]; then
+              { echo "## $TITLE"; echo; cat "$WORK/issue.md"; } > "$WORK/comment.md"
+              gh issue comment "$open" --body-file "$WORK/comment.md"
+              gh issue edit "$open" --add-assignee "$ASSIGNEE"
+            else
+              gh issue create --title "$TITLE" --body-file "$WORK/issue.md" --assignee "$ASSIGNEE"
+            fi
+          fi
