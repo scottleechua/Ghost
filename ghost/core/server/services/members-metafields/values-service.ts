@@ -5,31 +5,45 @@ import type { Knex } from 'knex';
 import { z } from 'zod';
 import {
   FIELD_TYPES,
-  subFieldsOf,
+  partsOf,
   type FieldType,
   type MetafieldChangeEventField,
 } from '@tryghost/metafield-types';
 import {
-  CUSTOM_NAMESPACE,
+  IdentityTextSchema,
+  type Key,
+  KeySchema,
+  type Namespace,
+  NamespaceSchema,
   QUALIFIER,
-  formatIdentity,
-  parseIdentity,
+  SEPARATOR,
 } from '@tryghost/metafield-types/identity';
 import {
+  DbMetafield,
   DbMetafieldChangeEventWithMember,
-  DbMetafieldLeaf,
+  DbStoredValueRow,
   DbMetafieldValue,
   FIELD_STATUS,
   StoredFieldList,
   type MetafieldChangeEvent,
+  type SingleWriteOrigin,
   type WriteOrigin,
 } from './schema';
 import { toDatabaseDate } from '../../lib/db-types/date';
-import { ACTIVE_ONLY, definitions, knexify, readableBy } from './queries';
+import type { MetafieldsTracking } from './tracking';
+import {
+  ACTIVE_ONLY,
+  FIELDS_TABLE,
+  fieldReference,
+  knexify,
+  onField,
+  readableBy,
+  type FieldIdentity,
+  type FieldSource,
+} from './queries';
 import { canWrite, type Audience, type MemberAccess } from './access';
-import { leavesToWrite, valuesFromLeaves, type StoredLeaf } from './storage';
+import { valueRowsToWrite, valuesFromRows, type StoredValueRow } from './storage';
 
-const FIELDS_TABLE = 'members_metafields';
 const VALUES_TABLE = 'members_metafield_values';
 const CHANGE_EVENTS_TABLE = 'members_metafield_change_events';
 const MEMBERS_TABLE = 'members';
@@ -52,12 +66,21 @@ const MAX_KEY_LENGTH: number = require('../../data/schema').tables[FIELDS_TABLE]
 const UPSERT_CHUNK = 400;
 
 /** Derived, not restated, so a column changing shape in `schema.ts` changes here too. */
-type DbLeafRow = z.infer<typeof DbMetafieldValue>;
+type DbValueRow = z.infer<typeof DbMetafieldValue>;
+
+/**
+ * The columns a value row is keyed by, from the canonical schema, so a write's conflict target
+ * cannot fall behind the table's primary key. Only SQLite would notice if it did: MySQL ignores
+ * a conflict target, and SQLite refuses one that names no key.
+ */
+const VALUE_KEY = z
+  .array(DbMetafieldValue.keyof())
+  .parse(require('../../data/schema').tables[VALUES_TABLE]['@@PRIMARY_KEY@@']);
 
 const MAX_IDENTITY_LENGTH = MAX_KEY_LENGTH * 2 + 1;
 const ValuesInput = z.record(z.string().max(MAX_IDENTITY_LENGTH), z.unknown());
 
-const wireProperty = (identity: string): string => [QUALIFIER, identity].join('.');
+const wireProperty = (identity: string): string => [QUALIFIER, identity].join(SEPARATOR);
 
 /** One value the site will not accept, against the name the write gave it. */
 interface Refusal {
@@ -84,10 +107,18 @@ function refusalError(refusals: Refusal[]): errors.ValidationError {
   });
 }
 
+/** What a write needs of a field, decoded so its namespace and key arrive checked. */
+const WritableField = DbMetafield.pick({
+  id: true,
+  name: true,
+  type: true,
+  member_access: true,
+}).extend({ namespace: NamespaceSchema, key: KeySchema });
+
 interface AllowedField {
   id: string;
-  namespace: string;
-  key: string;
+  namespace: Namespace;
+  key: Key;
   name: string;
   type: FieldType;
   memberAccess: MemberAccess;
@@ -102,8 +133,17 @@ export interface PlannedWrite {
 /** Checked writes and who is making them: everything needed to store them. */
 export interface MetafieldPlan {
   writes: PlannedWrite[];
-  origin: WriteOrigin;
+  origin: SingleWriteOrigin;
 }
+
+/**
+ * Every value an import writes came out of its file, whichever column carried it. An import
+ * has no id to give until its runs are stored with one, so it names its kind only.
+ */
+const IMPORTED: Extract<WriteOrigin, { source: 'import' }> = {
+  writtenBy: { type: 'import', id: null },
+  source: 'import',
+};
 
 /**
  * What a member holds for each defined field. Separate from the definitions service
@@ -112,12 +152,26 @@ export interface MetafieldPlan {
  */
 export class MetafieldValuesService {
   private knex: Knex;
+  private fields: FieldSource;
   /** A getter, not a number: the ceiling is an operator setting that changes between requests. */
   private getMaxDefinitions: () => number;
+  private tracking: MetafieldsTracking;
 
-  constructor({ knex, getMaxDefinitions }: { knex: Knex; getMaxDefinitions: () => number }) {
+  constructor({
+    knex,
+    fields,
+    getMaxDefinitions,
+    tracking,
+  }: {
+    knex: Knex;
+    fields: FieldSource;
+    getMaxDefinitions: () => number;
+    tracking: MetafieldsTracking;
+  }) {
     this.knex = knex;
+    this.fields = fields;
     this.getMaxDefinitions = getMaxDefinitions;
+    this.tracking = tracking;
   }
 
   // The query is scoped to the audience, so a field they may not see is absent from
@@ -128,29 +182,63 @@ export class MetafieldValuesService {
     identities: string[],
     audience: Audience,
   ): Promise<Map<string, AllowedField>> {
-    const keys = identities
-      .map((identity) => parseIdentity(identity))
-      .filter((parsed) => parsed !== null && parsed.namespace === CUSTOM_NAMESPACE)
-      .map((parsed) => (parsed as { key: string }).key);
-    if (keys.length === 0) {
+    // A write names whole fields, so an identity naming a part is one no field answers to.
+    const keysByNamespace = new Map<Namespace, Key[]>();
+    for (const text of identities) {
+      const identity = z.safeDecode(IdentityTextSchema, text);
+      if (identity.success && identity.data.parts.length === 0) {
+        const { namespace, key } = identity.data;
+        keysByNamespace.set(namespace, [...(keysByNamespace.get(namespace) ?? []), key]);
+      }
+    }
+    if (keysByNamespace.size === 0) {
       return new Map();
     }
-    const fields = await definitions(this.knex, { audience, status: ACTIVE_ONLY })
-      .whereIn('key', keys)
-      .select('id', 'key', 'name', 'type', 'member_access');
-    return new Map(
-      fields.map((field) => [
-        formatIdentity({ namespace: CUSTOM_NAMESPACE, key: field.key, partPath: null }),
+    const rows = await this.fields
+      .definitions(this.knex, { audience, status: ACTIVE_ONLY })
+      .where((query) => {
+        for (const [namespace, keys] of keysByNamespace) {
+          query.orWhere((inNamespace) =>
+            inNamespace.where('namespace', namespace).whereIn('key', keys),
+          );
+        }
+      })
+      .select('id', 'namespace', 'key', 'name', 'type', 'member_access');
+
+    const allowed = new Map<string, AllowedField>();
+    for (const row of rows) {
+      // Skipped rather than thrown, the way an unreadable value is: the write then reports
+      // this one field as unknown instead of failing every other value it carries.
+      const field = WritableField.safeParse(row);
+      if (!field.success) {
+        logging.warn(
+          {
+            event: { name: 'members.metafields.field_unreadable' },
+            err: field.error,
+            metafieldNamespace: row.namespace,
+            metafieldKey: row.key,
+          },
+          'Skipping an unreadable metafield',
+        );
+        continue;
+      }
+      allowed.set(
+        z.encode(IdentityTextSchema, {
+          namespace: field.data.namespace,
+          key: field.data.key,
+          parts: [],
+        }),
         {
-          id: field.id,
-          key: field.key,
-          name: field.name,
-          type: field.type,
-          namespace: CUSTOM_NAMESPACE,
-          memberAccess: field.member_access,
+          id: field.data.id,
+          namespace: field.data.namespace,
+          key: field.data.key,
+          name: field.data.name,
+          type: field.data.type,
+          memberAccess: field.data.member_access,
         },
-      ]),
-    );
+      );
+    }
+    return allowed;
   }
 
   /**
@@ -183,11 +271,7 @@ export class MetafieldValuesService {
     // cannot carry an order. `path` is ordered so composite parts assemble the same
     // way every time.
     const rows = await readableBy(
-      executor(VALUES_TABLE).join(
-        FIELDS_TABLE,
-        `${VALUES_TABLE}.metafield_key`,
-        `${FIELDS_TABLE}.key`,
-      ),
+      executor(VALUES_TABLE).join(this.fields.table(executor), onField(FIELDS_TABLE, VALUES_TABLE)),
       audience,
     )
       .whereIn(`${VALUES_TABLE}.member_id`, memberIds)
@@ -195,21 +279,23 @@ export class MetafieldValuesService {
       .orderBy(`${VALUES_TABLE}.path`, 'asc')
       .select(
         `${VALUES_TABLE}.member_id`,
+        `${FIELDS_TABLE}.namespace`,
         `${FIELDS_TABLE}.key`,
         `${FIELDS_TABLE}.type`,
         `${VALUES_TABLE}.path`,
         `${VALUES_TABLE}.value_text`,
       );
 
-    const leaves: StoredLeaf[] = [];
+    const stored: StoredValueRow[] = [];
     for (const row of rows) {
       try {
-        leaves.push(DbMetafieldLeaf.parse(row));
+        stored.push(DbStoredValueRow.parse(row));
       } catch (err) {
         logging.warn(
           {
             event: { name: 'members.metafields.value_unreadable' },
             err,
+            metafieldNamespace: row.namespace,
             metafieldKey: row.key,
             path: row.path,
           },
@@ -218,12 +304,7 @@ export class MetafieldValuesService {
       }
     }
 
-    return new Map(
-      [...valuesFromLeaves(leaves)].map(([memberId, values]) => [
-        memberId,
-        { [CUSTOM_NAMESPACE]: values },
-      ]),
-    );
+    return valuesFromRows(stored);
   }
 
   private parseValues(input: unknown): Record<string, unknown> {
@@ -253,11 +334,13 @@ export class MetafieldValuesService {
       if (typeof values !== 'object' || values === null || Array.isArray(values)) {
         throw new errors.ValidationError({
           message: 'Metafield values must be an object keyed by field key.',
-          property: [QUALIFIER, namespace].join('.'),
+          property: [QUALIFIER, namespace].join(SEPARATOR),
         });
       }
       for (const [key, raw] of Object.entries(values as Record<string, unknown>)) {
-        identified[`${namespace}.${key}`] = raw;
+        // Joined as text, not written by the codec: these segments are unchecked, and a write
+        // naming a field that cannot exist is refused under the name it gave.
+        identified[[namespace, key].join(SEPARATOR)] = raw;
       }
     }
     return identified;
@@ -312,7 +395,7 @@ export class MetafieldValuesService {
       // `null` clears any field, and `''` clears one with no parts. For a value
       // with parts `''` names nothing, so it is left to fail validation rather than
       // being read as a silent delete.
-      if (raw === null || (raw === '' && subFieldsOf(field.type) === null)) {
+      if (raw === null || (raw === '' && partsOf(field.type) === null)) {
         writes.push({ field });
         continue;
       }
@@ -328,7 +411,7 @@ export class MetafieldValuesService {
         for (const issue of value.error.issues) {
           refusals.push({
             message: issue.message,
-            property: [wireProperty(identity), ...issue.path].join('.'),
+            property: [wireProperty(identity), ...issue.path].join(SEPARATOR),
           });
         }
         continue;
@@ -355,50 +438,87 @@ export class MetafieldValuesService {
    * itself and where it wrote, so a new one cannot quietly inherit the identity of
    * whichever was written first.
    *
-   * Always transactional. Given an executor it joins that transaction, so the importer's
-   * failed value write takes its member with it; given none it opens its own.
+   * Always transactional. Given an executor it joins that transaction, so a failed value
+   * write takes the member save it joined with it; given none it opens its own.
    *
    * Every write also puts an entry on the member's activity feed, naming the fields it
    * touched and who wrote them where, in the same transaction, so the feed cannot name a
    * change that was not stored or miss one that was. A value has more than one author,
    * and the feed is where a publisher finds out which of them changed it.
+   *
+   * Every write is reported to the metafields tracking, saying where it was made and whether it
+   * was stored, so a dashboard can follow how each place saves values. A value `planWrite`
+   * refuses never gets here: the refusal is answered to whoever wrote it.
    */
   async applyWrite(
     memberId: string,
     writes: PlannedWrite[],
-    { writtenBy, source, executor = this.knex }: WriteOrigin & { executor?: Knex },
+    origin: SingleWriteOrigin & { executor?: Knex.Transaction },
   ): Promise<void> {
     if (writes.length === 0) {
       return;
     }
+    const { executor } = origin;
+    const stored = this.store(memberId, writes, origin, executor);
 
+    // A write that joined the caller's transaction is only stored once that transaction
+    // finishes without an error.
+    this.tracking.valuesWrite(
+      { source: origin.source, fields: writes.map(({ field }) => field) },
+      executor ? stored.then(() => executor.executionPromise) : stored,
+    );
+    await stored;
+  }
+
+  /**
+   * Stores the values from one row of a members import, joining the row's transaction so a
+   * value that fails takes its member with it. The import records its run as a whole, so the
+   * row's write is not reported to the tracking.
+   */
+  async applyImportedWrite(
+    memberId: string,
+    writes: PlannedWrite[],
+    executor: Knex.Transaction,
+  ): Promise<void> {
+    if (writes.length === 0) {
+      return;
+    }
+    await this.store(memberId, writes, IMPORTED, executor);
+  }
+
+  /** Stores a write and its activity feed entry, joining `executor`'s transaction if given. */
+  private async store(
+    memberId: string,
+    writes: PlannedWrite[],
+    { writtenBy, source }: WriteOrigin,
+    executor: Knex.Transaction | undefined,
+  ): Promise<void> {
     const apply = async (trx: Knex) => {
       // Built first, then sent as whole statements: a handful per member rather
       // than one per part, under one timestamp, because a write happened once
       // however many rows record it.
       const now = new Date();
-      const clearedKeys: string[] = [];
-      const clearedPaths: Array<{ fieldKey: string; paths: string[] }> = [];
-      const rows: DbLeafRow[] = [];
+      const clearedFields: FieldIdentity[] = [];
+      const clearedPaths: Array<{ field: FieldIdentity; paths: string[] }> = [];
+      const rows: DbValueRow[] = [];
 
       for (const { field, value } of writes) {
         if (value === undefined) {
-          clearedKeys.push(field.key);
+          clearedFields.push(field);
           continue;
         }
 
-        const { set, cleared } = leavesToWrite(value);
+        const { set, cleared } = valueRowsToWrite(value);
         if (cleared.length > 0) {
-          clearedPaths.push({ fieldKey: field.key, paths: cleared });
+          clearedPaths.push({ field, paths: cleared });
         }
 
         rows.push(
-          ...set.map((leaf) => ({
-            id: new ObjectID().toHexString(),
+          ...set.map((row): DbValueRow => ({
+            ...fieldReference(field),
             member_id: memberId,
-            metafield_key: field.key,
-            path: leaf.path,
-            value_text: leaf.value_text,
+            path: row.path,
+            value_text: row.value_text,
             written_by_type: writtenBy.type,
             written_by_id: writtenBy.id,
             created_at: now,
@@ -407,21 +527,25 @@ export class MetafieldValuesService {
         );
       }
 
-      if (clearedKeys.length > 0) {
+      // One statement with a group per field, rather than a statement per field.
+      if (clearedFields.length > 0) {
         await trx(VALUES_TABLE)
           .where('member_id', memberId)
-          .whereIn('metafield_key', clearedKeys)
+          .where((builder) => {
+            for (const field of clearedFields) {
+              builder.orWhere((rowsOf) => rowsOf.where(fieldReference(field)));
+            }
+          })
           .del();
       }
 
       if (clearedPaths.length > 0) {
-        // One statement with a group per field, rather than a statement per field.
         await trx(VALUES_TABLE)
           .where('member_id', memberId)
           .where((builder) => {
-            for (const { fieldKey, paths } of clearedPaths) {
-              builder.orWhere((pair) =>
-                pair.where('metafield_key', fieldKey).whereIn('path', paths),
+            for (const { field, paths } of clearedPaths) {
+              builder.orWhere((rowsOf) =>
+                rowsOf.where(fieldReference(field)).whereIn('path', paths),
               );
             }
           })
@@ -432,12 +556,12 @@ export class MetafieldValuesService {
         // Typed as the plain row because `merge` takes its columns as `keyof` the
         // builder's record, which for a composite table registration is the scope
         // names rather than the columns.
-        await trx<DbLeafRow>(VALUES_TABLE)
+        await trx<DbValueRow>(VALUES_TABLE)
           .insert(rows.slice(from, from + UPSERT_CHUNK))
           // Naming the columns rather than giving values takes each from the row
           // that lost the conflict, so every part updates to its own value.
-          .onConflict(['member_id', 'metafield_key', 'path'])
-          // The writer is merged with the value, so a leaf names who wrote what
+          .onConflict(VALUE_KEY)
+          // The writer is merged with the value, so a row names who wrote what
           // it currently holds rather than who wrote its first value.
           .merge(['value_text', 'written_by_type', 'written_by_id', 'updated_at']);
       }
@@ -460,12 +584,8 @@ export class MetafieldValuesService {
       });
     };
 
-    // knex's marker for a transactor: join it rather than nesting a savepoint under it.
-    if (executor.isTransaction) {
-      await apply(executor);
-    } else {
-      await executor.transaction(apply);
-    }
+    // Joins the caller's transaction rather than nesting a savepoint under it.
+    await (executor ? apply(executor) : this.knex.transaction(apply));
   }
 
   /**

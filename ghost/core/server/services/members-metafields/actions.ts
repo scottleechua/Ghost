@@ -1,6 +1,6 @@
 import logging from '@tryghost/logging';
 import type { MemberAccess } from './access';
-import type { WriteOrigin } from './schema';
+import type { SingleWriteOrigin } from './schema';
 
 export interface Actor {
   id: string;
@@ -42,7 +42,7 @@ export function actingContext(context: unknown): RequestContext {
  * `actingContext`, so the values a request writes and the history it records name the
  * same writer. Null when nobody is acting, which no Admin API write should be.
  */
-export function adminWriteOrigin(context: unknown): WriteOrigin | null {
+export function adminWriteOrigin(context: unknown): SingleWriteOrigin | null {
   const { actor } = actingContext(context);
   if (!actor) {
     return null;
@@ -82,7 +82,8 @@ export type MetafieldVerb = keyof typeof COMMANDS;
 // A change to one field always passes its `primary_name` so the log reads as a human
 // label, not a bare key — this is what keeps the timeline legible after a hard delete,
 // when the row itself is gone. `key` rides alongside it because the key is how a field
-// is addressed publicly — its id never leaves the API.
+// is addressed publicly — its id never leaves the API. The namespace goes unrecorded:
+// staff only ever change fields in `custom`.
 //
 // A reorder names no field: it carries the count and the word the feed reads it by.
 export type MetafieldActionDetails =
