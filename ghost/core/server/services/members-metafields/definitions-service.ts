@@ -1,13 +1,22 @@
+import { isDeepStrictEqual } from 'node:util';
 import ObjectID from 'bson-objectid';
 import errors from '@tryghost/errors';
 import type { Knex } from 'knex';
 import { z } from 'zod';
 import { Metafield } from './models';
-import { FieldTypeSchema, type FieldType } from '@tryghost/metafield-types';
-import { metafieldCodec } from './codec';
+import {
+  FieldTypeSchema,
+  TypedSettingsInputSchema,
+  WRITTEN_SETTINGS,
+  refusedProperty,
+  withTypedSettings,
+  type TypedSettings,
+} from '@tryghost/metafield-types';
+import { metafieldCodec, metafieldCodecWithDefaults } from './codec';
+import { readStoredField } from './stored-fields';
 import { type Key, KeySchema, type Namespace } from '@tryghost/metafield-types/identity';
 import type { Namespaces } from './namespaces';
-import { FIELD_STATUS, FieldStatusSchema } from './schema';
+import { DbTypedSettings, FIELD_STATUS, FieldStatusSchema } from './schema';
 import {
   ADMIN,
   MEMBER_ACCESS,
@@ -63,13 +72,12 @@ const FieldName = z
 
 const FieldAccess = z.object({ member: MemberAccessSchema });
 
-// No key: the backend mints it from the name.
+// No key: the backend mints it from the name. The type is checked with the settings it takes.
 
-const AddFieldInput = z.object({
-  name: FieldName,
-  type: FieldTypeSchema,
-  access: FieldAccess.optional(),
-});
+const AddFieldInput = withTypedSettings(
+  { name: FieldName, access: FieldAccess.optional() },
+  WRITTEN_SETTINGS,
+);
 
 // A bound on the work one request can ask for, separate from how many definitions
 // a site may hold in total. Every definition in a batch costs several queries
@@ -100,10 +108,12 @@ const ReorderInput = z
   )
   .min(1, { message: 'The order must name every custom field.' });
 
-// Name, status and access are mutable. `key` and `type` are accepted so the
-// immutability rules can reject a change loudly; they are never persisted.
+// Name, settings, status and access are mutable. `key` and `type` are accepted so the
+// immutability rules can reject a change loudly; they are never persisted. Settings are checked
+// against the field's type once the field is read.
 const EditFieldInput = z.object({
   name: FieldName.optional(),
+  settings: z.unknown().optional(),
   status: FieldStatusSchema.optional(),
   access: FieldAccess.optional(),
   key: z.optional(KeySchema),
@@ -165,8 +175,17 @@ export class MetafieldDefinitionsService {
   }
 
   private async list(query: DefinitionQuery): Promise<Metafield[]> {
-    const rows = await inFieldOrder(query).select('*');
-    return rows.map((row) => z.decode(metafieldCodec, row));
+    const rows = await inFieldOrder(query.read).select('*');
+    return rows.flatMap((row) => this.readField(row) ?? []);
+  }
+
+  /** A stored definition, or null for one that can't be read even with its type's defaults. */
+  private readField(row: Readonly<Record<string, unknown>>): Metafield | null {
+    return readStoredField(
+      row,
+      { asStored: metafieldCodec, withDefaults: metafieldCodecWithDefaults },
+      { reader: 'definitions', tracking: this.tracking },
+    );
   }
 
   async read(namespace: Namespace, key: Key, audience: Audience): Promise<Metafield> {
@@ -242,7 +261,7 @@ export class MetafieldDefinitionsService {
               namespace,
               key,
               name: field.name,
-              type: field.type,
+              typed: field,
               memberAccess: field.access?.member ?? MEMBER_ACCESS.none,
               sortOrder: firstSortOrder + index,
             });
@@ -284,9 +303,8 @@ export class MetafieldDefinitionsService {
     wanted: {
       key: string;
       name: string;
-      type: FieldType;
       access: z.infer<typeof FieldAccess>;
-    },
+    } & TypedSettings,
     { executor = this.knex }: { executor?: Knex } = {},
   ): Promise<Metafield> {
     await this.namespaces.assertChangeable(namespace);
@@ -303,7 +321,7 @@ export class MetafieldDefinitionsService {
         namespace,
         key,
         name: wanted.name,
-        type: wanted.type,
+        typed: wanted,
         memberAccess: wanted.access.member,
         sortOrder: await this.nextSortOrder(db, namespace),
       });
@@ -337,7 +355,7 @@ export class MetafieldDefinitionsService {
       namespace: Namespace;
       key: Key;
       name: string;
-      type: FieldType;
+      typed: TypedSettings;
       memberAccess: MemberAccess;
       sortOrder: number;
     },
@@ -347,7 +365,7 @@ export class MetafieldDefinitionsService {
       namespace: field.namespace,
       key: field.key,
       name: field.name,
-      type: field.type,
+      ...z.encode(DbTypedSettings, field.typed),
       member_access: field.memberAccess,
       sort_order: field.sortOrder,
       created_at: new Date(),
@@ -366,7 +384,7 @@ export class MetafieldDefinitionsService {
     const row = await executor(FIELDS_TABLE)
       .where({ namespace: field.namespace, key: field.key })
       .first();
-    return row ? z.decode(metafieldCodec, row) : null;
+    return row ? this.readField(row) : null;
   }
 
   /** The same entry `add` writes. Only the caller knows its transaction committed. */
@@ -423,11 +441,11 @@ export class MetafieldDefinitionsService {
         // two concurrent reorders take their row locks in the same sequence and
         // cannot deadlock. `updated_at` is left alone — the definitions did not
         // change, the list around them did.
-        const ranks = new Map(keys.map((key, rank) => [key, rank]));
-        for (const key of [...keys].sort()) {
-          await trx(FIELDS_TABLE)
-            .where({ namespace, key })
-            .update({ sort_order: ranks.get(key)! });
+        const ranked = keys
+          .map((key, rank) => ({ key, rank }))
+          .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+        for (const { key, rank } of ranked) {
+          await trx(FIELDS_TABLE).where({ namespace, key }).update({ sort_order: rank });
         }
 
         // An order covers the whole list, archived definitions included.
@@ -491,7 +509,16 @@ export class MetafieldDefinitionsService {
       .whereIn('key', keys)
       .select('*');
     const byKey = new Map(rows.map((row) => [row.key, row]));
-    return keys.map((key) => z.decode(metafieldCodec, byKey.get(key)!));
+    return keys.map((key) => {
+      const row = byKey.get(key);
+      const field = row ? this.readField(row) : null;
+      if (!field) {
+        throw new errors.InternalServerError({
+          message: 'A custom field could not be read back after it was written.',
+        });
+      }
+      return field;
+    });
   }
 
   /**
@@ -571,7 +598,7 @@ export class MetafieldDefinitionsService {
       if (!parsed.success) {
         throw new errors.ValidationError({
           message: parsed.error.issues[0].message,
-          property: parsed.error.issues[0].path[0]?.toString(),
+          property: propertyOf(parsed.error.issues[0].path),
         });
       }
       const patch = parsed.data;
@@ -600,6 +627,18 @@ export class MetafieldDefinitionsService {
         });
       }
 
+      // Checked before anything is written, so an edit refused for its settings changes nothing.
+      const settings =
+        patch.settings === undefined
+          ? undefined
+          : TypedSettingsInputSchema.safeParse({ type: existing.type, settings: patch.settings });
+      if (settings && !settings.success) {
+        throw new errors.ValidationError({
+          message: settings.error.issues[0].message,
+          property: propertyOf(settings.error.issues[0].path),
+        });
+      }
+
       // Only write (and log a rename) when the name actually changes, so
       // re-saving an unchanged field is a no-op rather than a spurious edit.
       if (patch.name !== undefined && patch.name !== existing.name) {
@@ -622,6 +661,20 @@ export class MetafieldDefinitionsService {
           verb: 'rename',
           subject: existing.id,
           details: { primary_name: patch.name, key, previous_name: existing.name },
+        });
+      }
+
+      // Only a change is written and logged, so re-saving the same options is a no-op.
+      if (settings && !isDeepStrictEqual(settings.data.settings, existing.settings)) {
+        attempt.changing('changeSettings');
+        await this.knex(FIELDS_TABLE)
+          .where({ namespace, key })
+          .update({ ...z.encode(DbTypedSettings, settings.data), updated_at: new Date() });
+        await this.recordAction({
+          context,
+          verb: 'changeSettings',
+          subject: existing.id,
+          details: { primary_name: patch.name ?? existing.name, key },
         });
       }
 
@@ -720,13 +773,14 @@ function usableKey(stated: string): Key {
   return key;
 }
 
-// The field a zod issue points at. Create validates an array, so an issue's path
-// is prefixed with the item's index (`[0, 'name']`); `property` names the field
-// that is wrong, so the numeric prefix is dropped. Which item it was is reported
-// separately by batchContext, keeping `property` the bare field name a client can
-// map straight onto its form input.
+// What a zod issue points at within one field, by its path, such as `name` or
+// `settings.options.2`, so a client can show it beside the input that set the value.
+// Create validates an array, so an issue's path is prefixed with the item's index
+// (`[0, 'name']`), which is dropped: which item it was is reported separately by
+// batchContext. An issue with the batch as a whole points at nothing.
 function propertyOf(path: PropertyKey[]): string | undefined {
-  return path.find((segment) => typeof segment === 'string');
+  const withinField = typeof path[0] === 'number' ? path.slice(1) : path;
+  return withinField.length > 0 ? refusedProperty(withinField) : undefined;
 }
 
 // Which definition of a batch an error belongs to. Only set when the request
@@ -739,10 +793,14 @@ function batchContext(index: PropertyKey | undefined, requestedCount: number): s
   return `Custom field ${index + 1} of ${requestedCount}.`;
 }
 
+const DriverError = z.object({ code: z.string() });
+
 function isUniqueConstraintViolation(error: unknown): boolean {
-  const code = (error as { code?: string })?.code;
+  const code = DriverError.safeParse(error).data?.code;
   return code === 'ER_DUP_ENTRY' || code === 'SQLITE_CONSTRAINT';
 }
+
+const MongoQuery = z.record(z.string(), z.unknown());
 
 // Parse a caller-supplied NQL filter, without applying it. A malformed filter is a
 // client error (400), not a 500. Whether the result widens the statuses is decided by
@@ -751,12 +809,12 @@ function isUniqueConstraintViolation(error: unknown): boolean {
 function parseFilter(filter: string): Record<string, unknown> {
   let mongoQuery: Record<string, unknown>;
   try {
-    mongoQuery = nql(filter).toJSON() as Record<string, unknown>;
+    mongoQuery = MongoQuery.parse(nql(filter).toJSON());
   } catch (err) {
     throw new errors.BadRequestError({
       message: 'Could not parse the filter parameter.',
       property: 'filter',
-      err: err as Error,
+      err: err instanceof Error ? err : undefined,
     });
   }
   return mongoQuery;
@@ -775,9 +833,10 @@ function filterReferencesAttribute(query: Record<string, unknown>, attribute: st
       return true;
     }
     if ((key === '$and' || key === '$or' || key === '$nor') && Array.isArray(value)) {
-      return value.some((sub) =>
-        filterReferencesAttribute(sub as Record<string, unknown>, attribute),
-      );
+      return value.some((sub) => {
+        const clause = MongoQuery.safeParse(sub);
+        return clause.success && filterReferencesAttribute(clause.data, attribute);
+      });
     }
     return false;
   });

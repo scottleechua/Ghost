@@ -2,6 +2,7 @@ import moment from 'moment-timezone';
 import buildImportEmail, { type EmailLinks } from './completion-email';
 import { stripFormulaGuard } from '../csv';
 import { fieldValuesFromCsvRow, type CsvField } from '@tryghost/metafield-csv';
+import { z } from 'zod';
 import type { Knex } from 'knex';
 import type { MemberImportRow, ImportErrorRow, ImportLabel, Label } from './row';
 import type { RowSpool } from './spool';
@@ -106,21 +107,20 @@ export interface EmailNotifications {
 // escaping.
 export type FailureReporter = (error: unknown) => void;
 
-// Opaque to the import: planWrite produces it, applyWrite consumes it.
-type MetafieldPlan = unknown;
-
 // The metafields collaborator as the import needs it. activeFields is the field set a
 // metafields.* column is read against, empty when the feature is off; planWrite
 // validates a row's values (throwing so the row fails whole) and applyWrite persists
-// them, touching only the parts the row named, both on the row's transaction.
-export interface MetafieldsImport {
+// them, touching only the parts the row named, both on the row's transaction. A plan is
+// opaque to the import, which only hands what planWrite made to applyWrite, so its type is
+// whatever the collaborator's is.
+export interface MetafieldsImport<Plan> {
   activeFields(): Promise<CsvField[]>;
-  planWrite(values: Record<string, unknown>): Promise<MetafieldPlan[]>;
-  applyWrite(memberId: string, plan: MetafieldPlan[], executor: Knex.Transaction): Promise<void>;
+  planWrite(values: Record<string, unknown>): Promise<Plan[]>;
+  applyWrite(memberId: string, plan: Plan[], executor: Knex.Transaction): Promise<void>;
 }
 
 // The collaborators the import depends on, one per concern.
-interface ImporterDeps {
+interface ImporterDeps<Plan> {
   knex: Knex;
   readRows: ReadRows;
   spool: RowSpool;
@@ -128,7 +128,7 @@ interface ImporterDeps {
   tiers: TiersRepository;
   stripe: StripeSubscriptions;
   gifts: GiftService;
-  metafields: MetafieldsImport;
+  metafields: MetafieldsImport<Plan>;
   email: EmailNotifications;
   report: FailureReporter;
   dispatchJob: (job: MembersImportJob) => Promise<void>;
@@ -216,7 +216,7 @@ function canImportInline(rowCount: number, expensive: boolean, inlineThreshold: 
   return rowCount <= inlineThreshold && !expensive;
 }
 
-class MembersCSVImporter {
+class MembersCSVImporter<Plan> {
   private _knex: Knex;
   private _readRows: ReadRows;
   private _spool: RowSpool;
@@ -224,7 +224,7 @@ class MembersCSVImporter {
   private _tiers: TiersRepository;
   private _stripe: StripeSubscriptions;
   private _gifts: GiftService;
-  private _metafields: MetafieldsImport;
+  private _metafields: MetafieldsImport<Plan>;
   private _email: EmailNotifications;
   private _report: FailureReporter;
   private _dispatchJob: (job: MembersImportJob) => Promise<void>;
@@ -247,7 +247,7 @@ class MembersCSVImporter {
     getTimezone,
     getInlineThreshold,
     tracking,
-  }: ImporterDeps) {
+  }: ImporterDeps<Plan>) {
     this._knex = knex;
     this._readRows = readRows;
     this._spool = spool;
@@ -670,6 +670,8 @@ class MembersCSVImporter {
   }
 }
 
+const ValueRefusal = z.object({ property: z.string(), message: z.string() });
+
 // A row error is read next to a spreadsheet, and a value rejection states only what the
 // value should be — the same sentence Admin shows under a single input, where the field is
 // already on screen. `property` is the dotted path a default export writes as its column
@@ -681,11 +683,11 @@ async function namingTheColumn<T>(plan: () => Promise<T>): Promise<T> {
   try {
     return await plan();
   } catch (error) {
-    const { property, message } = (error ?? {}) as { property?: unknown; message?: unknown };
-    const namesAField = typeof property === 'string' && property.includes('.');
-    if (!namesAField || typeof message !== 'string') {
+    const refusal = ValueRefusal.safeParse(error);
+    if (!refusal.success || !refusal.data.property.includes('.')) {
       throw error;
     }
+    const { property, message } = refusal.data;
     throw new errors.DataImportError({ message: `${property}: ${message}` });
   }
 }

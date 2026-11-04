@@ -6,16 +6,19 @@ const models = require('../../../../../core/server/models');
 const mail = require('../../../../../core/server/lib/mail');
 const sentry = require('../../../../../core/shared/sentry');
 const urlUtils = require('../../../../../core/shared/url-utils').default;
-const emailAddress = require('../../../../../core/server/services/email-address');
-const newslettersService = require('../../../../../core/server/services/newsletters');
+const newsletters = require('../../../../../core/server/services/newsletters').default;
 
 describe('Newsletters Service', function () {
+  beforeAll(async function () {
+    await newsletters.init();
+  });
+
   describe('Newsletter Service', function () {
     it('Provides expected public API', async function () {
-      assert.ok(newslettersService.browse);
-      assert.ok(newslettersService.edit);
-      assert.ok(newslettersService.add);
-      assert.ok(newslettersService.verifyPropertyUpdate);
+      assert.ok(newsletters.service.browse);
+      assert.ok(newsletters.service.edit);
+      assert.ok(newsletters.service.add);
+      assert.ok(newsletters.service.verifyPropertyUpdate);
     });
   });
 
@@ -37,9 +40,6 @@ describe('Newsletters Service', function () {
       sandbox.useFakeTimers({ now, toFake: ['Date'] });
       sandbox.stub(sentry, 'captureMessage');
       sandbox.stub(logging, 'warn');
-      // The service reads defaultFromAddress, which the real policy does not define, so the
-      // sender is undefined. This only needs the policy object to exist.
-      sandbox.stub(emailAddress, 'service').value({});
       sandbox
         .stub(urlUtils, 'urlFor')
         .withArgs('admin', true)
@@ -70,7 +70,7 @@ describe('Newsletters Service', function () {
     });
 
     it('issues a verification link and applies its token through the configured provider', async function () {
-      await newslettersService.sendEmailVerificationMagicLink({
+      await newsletters.service.sendEmailVerificationMagicLink({
         id: 'newsletter-id',
         email: 'owner@example.com',
         property: 'sender_email',
@@ -89,7 +89,7 @@ describe('Newsletters Service', function () {
       assert.ok(message.text.includes(link));
       assert.ok(message.html.includes(link));
 
-      const result = await newslettersService.verifyPropertyUpdate(
+      const result = await newsletters.service.verifyPropertyUpdate(
         new URL(link).hash.split('verifyEmail=')[1],
       );
 
@@ -107,7 +107,7 @@ describe('Newsletters Service', function () {
       editNewsletter.rejects(failure);
 
       await assert.rejects(
-        newslettersService.verifyPropertyUpdate(token.token),
+        newsletters.service.verifyPropertyUpdate(token.token),
         (error) => error === failure,
       );
 
@@ -117,11 +117,11 @@ describe('Newsletters Service', function () {
 
     it('accepts seven uses of a fresh token and rejects the eighth without another newsletter edit', async function () {
       for (let i = 0; i < 7; i++) {
-        const result = await newslettersService.verifyPropertyUpdate(token.token);
+        const result = await newsletters.service.verifyPropertyUpdate(token.token);
         assert.equal(result.meta.email_verified, 'sender_email');
       }
 
-      await assert.rejects(newslettersService.verifyPropertyUpdate(token.token), {
+      await assert.rejects(newsletters.service.verifyPropertyUpdate(token.token), {
         code: 'TOKEN_EXPIRED',
       });
 
@@ -149,7 +149,7 @@ describe('Newsletters Service', function () {
       it(`accepts a token ${limit}`, async function () {
         Object.assign(token, accepted);
 
-        const result = await newslettersService.verifyPropertyUpdate(token.token);
+        const result = await newsletters.service.verifyPropertyUpdate(token.token);
 
         assert.equal(result.meta.email_verified, 'sender_email');
         sinon.assert.calledOnce(editNewsletter);
@@ -158,7 +158,7 @@ describe('Newsletters Service', function () {
       it(`rejects a token beyond ${limit} before changing newsletter settings`, async function () {
         Object.assign(token, rejected);
 
-        await assert.rejects(newslettersService.verifyPropertyUpdate(token.token), {
+        await assert.rejects(newsletters.service.verifyPropertyUpdate(token.token), {
           code: 'TOKEN_EXPIRED',
         });
 
@@ -170,7 +170,7 @@ describe('Newsletters Service', function () {
     it('rejects an unknown token before changing newsletter settings', async function () {
       findToken.resolves(null);
 
-      await assert.rejects(newslettersService.verifyPropertyUpdate('missing'), {
+      await assert.rejects(newsletters.service.verifyPropertyUpdate('missing'), {
         code: 'INVALID_TOKEN',
       });
 
@@ -182,7 +182,7 @@ describe('Newsletters Service', function () {
       addToken.rejects(failure);
 
       await assert.rejects(
-        newslettersService.sendEmailVerificationMagicLink({
+        newsletters.service.sendEmailVerificationMagicLink({
           id: 'newsletter-id',
           email: 'owner@example.com',
           property: 'sender_email',
@@ -198,7 +198,7 @@ describe('Newsletters Service', function () {
       send.rejects(failure);
 
       await assert.rejects(
-        newslettersService.sendEmailVerificationMagicLink({
+        newsletters.service.sendEmailVerificationMagicLink({
           id: 'newsletter-id',
           email: 'owner@example.com',
           property: 'sender_email',

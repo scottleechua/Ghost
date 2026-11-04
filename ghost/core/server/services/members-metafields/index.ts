@@ -1,3 +1,4 @@
+import errors from '@tryghost/errors';
 import { limitService } from '../limits';
 import { MetafieldDefinitionsService } from './definitions-service';
 import { MetafieldValuesService } from './values-service';
@@ -7,7 +8,7 @@ import { resolveMaxDefinitions } from './config';
 import { customFields } from './custom-fields';
 import { createNamespaces, type Namespaces } from './namespaces';
 import { fieldSource, type FieldSource } from './queries';
-import { tracer } from '../../lib/tracing';
+import { meter, tracer } from '../../lib/tracing';
 import { metafieldsTracking } from './tracking';
 
 export type { Metafield } from './models';
@@ -47,6 +48,23 @@ export let definitions: MetafieldDefinitionsService | undefined;
 export let values: MetafieldValuesService | undefined;
 export let bindings: MetafieldBindingsService | undefined;
 
+/**
+ * Boot builds these before any request is served, so a call before then is a wiring fault and
+ * throws.
+ */
+export function booted(): {
+  namespaces: Namespaces;
+  definitions: MetafieldDefinitionsService;
+  values: MetafieldValuesService;
+} {
+  if (!namespaces || !definitions || !values) {
+    throw new errors.IncorrectUsageError({
+      message: 'Members metafields were used before boot initialised them.',
+    });
+  }
+  return { namespaces, definitions, values };
+}
+
 export function init(): void {
   // The five are constructed together below, so checking all of them keeps the "all or
   // none" invariant explicit rather than trusting one to stand in for the rest.
@@ -73,7 +91,7 @@ export function init(): void {
   namespaces = createNamespaces([customFields({ limitService, getMaxDefinitions })]);
   fields = fieldSource(namespaces);
 
-  const tracking = metafieldsTracking(tracer);
+  const tracking = metafieldsTracking({ tracer, meter });
   definitions = new MetafieldDefinitionsService({
     knex,
     fields,

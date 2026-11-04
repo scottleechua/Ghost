@@ -47,6 +47,12 @@ permissions:
 jobs:
   job_setup:
     name: Setup
+    # Skip sync-fork.yml pushes to main in TryGhost copies: upstream already ran these commits.
+    if: >-
+      !(github.event_name == 'push'
+        && github.ref == 'refs/heads/main'
+        && github.repository_owner == 'TryGhost'
+        && github.repository != 'TryGhost/Ghost')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -89,6 +95,16 @@ jobs:
         with:
           path: ~/.cache/pnpm/lockfile-verified.jsonl
           key: pnpm-lockfile-verified-${{ hashFiles('pnpm-lock.yaml', 'pnpm-workspace.yaml') }}
+
+      # setup-node-pnpm installs with --no-runtime, so CI runs the Node that
+      # NODE_VERSION names, not the devEngines.runtime pin. Fail if they drift.
+      - name: Check NODE_VERSION matches devEngines.runtime
+        run: |
+          pinned=$(jq -r .devEngines.runtime.version package.json)
+          if [ "$pinned" != "$NODE_VERSION" ]; then
+            echo "::error file=package.json::devEngines.runtime.version is $pinned but NODE_VERSION in ci.yml is $NODE_VERSION"
+            exit 1
+          fi
 
       # The only job that verifies the lockfile against the supply-chain
       # policies in pnpm-workspace.yaml (minimumReleaseAge, trustPolicy,
@@ -758,12 +774,12 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
           trust-lockfile: 'true'
-          # Without --no-runtime, pnpm links the devEngines Node and every
-          # leg of this matrix runs that same version. With it, pnpm still keys
-          # cached native builds by the devEngines Node major, so a build from
-          # another leg can be reused against the wrong ABI; disable the
-          # side-effects cache so native modules build for the running Node.
-          install-args: --no-runtime --config.side-effects-cache=false
+          # setup-node-pnpm installs with --no-runtime, so each leg runs its
+          # own Node rather than the devEngines one. pnpm still keys cached
+          # native builds by the devEngines Node major, so a build from another
+          # leg can be reused against the wrong ABI; disable the side-effects
+          # cache so native modules build for the running Node.
+          install-args: --config.side-effects-cache=false
 
       - name: Set timezone (non-UTC)
         uses: szenius/set-timezone@1f9716b0f7120e344f0c62bb7b1ee98819aefd42 # v2.0
@@ -902,7 +918,7 @@ jobs:
           --health-timeout=5s
           --health-retries=60
       redis:
-        image: redis:7.4@sha256:bd28fff4b665fdf1b73e8b5b73ec05d2f858f4fa3c8ea0d7c9bc09f7f6bf7039
+        image: redis:7.4@sha256:b6b6e3dc0c0952737748e55d5d885272840c7e42ba41ab1d5489f693419882f5
         ports:
           - 6379:6379
         options: >-
@@ -925,12 +941,12 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
           trust-lockfile: 'true'
-          # Without --no-runtime, pnpm links the devEngines Node and every
-          # leg of this matrix runs that same version. With it, pnpm still keys
-          # cached native builds by the devEngines Node major, so a build from
-          # another leg can be reused against the wrong ABI; disable the
-          # side-effects cache so native modules build for the running Node.
-          install-args: --no-runtime --config.side-effects-cache=false
+          # setup-node-pnpm installs with --no-runtime, so each leg runs its
+          # own Node rather than the devEngines one. pnpm still keys cached
+          # native builds by the devEngines Node major, so a build from another
+          # leg can be reused against the wrong ABI; disable the side-effects
+          # cache so native modules build for the running Node.
+          install-args: --config.side-effects-cache=false
 
       - name: Set timezone (non-UTC)
         uses: szenius/set-timezone@1f9716b0f7120e344f0c62bb7b1ee98819aefd42 # v2.0
@@ -952,6 +968,12 @@ jobs:
           else
             pnpm nx run ghost:test:e2e
           fi
+
+      - name: Newsletter tests (BullMQ jobs backend)
+        run: pnpm nx run ghost:test:bullmq
+
+      - name: Newsletter failure scenarios (BullMQ jobs backend)
+        run: pnpm nx run ghost:test:bullmq:scenarios
 
       - name: Start VersityGW for integration tests
         run: |
@@ -1038,12 +1060,12 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
           trust-lockfile: 'true'
-          # Without --no-runtime, pnpm links the devEngines Node and every
-          # leg of this matrix runs that same version. With it, pnpm still keys
-          # cached native builds by the devEngines Node major, so a build from
-          # another leg can be reused against the wrong ABI; disable the
-          # side-effects cache so native modules build for the running Node.
-          install-args: --no-runtime --config.side-effects-cache=false
+          # setup-node-pnpm installs with --no-runtime, so each leg runs its
+          # own Node rather than the devEngines one. pnpm still keys cached
+          # native builds by the devEngines Node major, so a build from another
+          # leg can be reused against the wrong ABI; disable the side-effects
+          # cache so native modules build for the running Node.
+          install-args: --config.side-effects-cache=false
 
       - name: Set env vars (MySQL)
         run: |
@@ -1161,18 +1183,20 @@ jobs:
           DEBIAN_FRONTEND: noninteractive
         # The runner image already has Firefox's other libraries; `playwright install-deps`
         # also pulls ~20MB of fonts the video-card tests don't use.
+        # The package name tracks the image's FFmpeg (libavcodec60 on 24.04, libavcodec62 on 26.04).
         # Worst case 3 × (65 + 125 + 5) = 585s stays inside timeout-minutes.
         run: |
           for i in 1 2 3; do
             if sudo timeout -k 5 60 apt-get update -yq \
                  -o Acquire::Retries=3 -o Acquire::http::Timeout=30 &&
+               codec=$(apt-cache pkgnames libavcodec | grep -m1 -xE 'libavcodec[0-9]+') &&
                sudo timeout -k 5 120 apt-get install -yq --no-install-recommends \
-                 -o Acquire::Retries=3 -o Acquire::http::Timeout=30 libavcodec60; then
+                 -o Acquire::Retries=3 -o Acquire::http::Timeout=30 "$codec"; then
               exit 0
             fi
-            echo "libavcodec60 attempt $i failed/stuck, retrying..."; sleep 5
+            echo "libavcodec attempt $i failed/stuck, retrying..."; sleep 5
           done
-          echo "libavcodec60 failed after 3 attempts"; exit 1
+          echo "libavcodec failed after 3 attempts"; exit 1
 
       - name: Run Playwright tests
         run: pnpm nx run ${{ matrix.app }}:test:acceptance --shard=${{ matrix.shardIndex }}/${{ matrix.shardTotal }}
@@ -2756,8 +2780,8 @@ jobs:
 
       # --provenance is explicit rather than relying on pnpm's auto-detection,
       # which degrades to a warning if it can't confirm visibility. --tag is
-      # always passed: a prerelease must never land on `latest`, and OIDC
-      # trusted publishing can't retag afterwards.
+      # always passed: a prerelease lands on `latest` only when its manifest
+      # entry names it, and OIDC trusted publishing can't retag afterwards.
       - name: Publish to npm
         if: steps.compare.outputs.changed == 'true'
         working-directory: ${{ matrix.package_path }}
