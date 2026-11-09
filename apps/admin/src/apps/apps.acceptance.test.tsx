@@ -193,6 +193,10 @@ describe('Managing apps', () => {
     const { sessionsApi, readApi } = await fakeAppPage(installation());
 
     await renderAdminApp('/apps', { labs });
+    // The review and the details page mark the developer as unverified; every app is for now,
+    // so the list doesn't repeat it.
+    await expect.element(appsScreen.row('Podcast')).toHaveTextContent('Example Audio');
+    await expect.element(appsScreen.unverifiedDeveloperBadge()).not.toBeInTheDocument();
     await appsScreen.row('Podcast').getByText('Publish episodes and embed players.').click();
 
     await expect.poll(currentRoute).toBe(APP_ROUTE);
@@ -360,6 +364,22 @@ describe('Managing apps', () => {
     await renderAdminApp(APP_ROUTE, { labs });
 
     await expect.element(appsScreen.notFramed()).toHaveTextContent('Podcast can’t open here');
+    await expect.element(appsScreen.frame()).not.toBeInTheDocument();
+  });
+
+  it('refuses to frame an app whose page is on another port of Admin’s host', async () => {
+    // An older Ghost accepted this, as it refused only Admin's exact origin. The page would
+    // be sent Admin's session cookie, which ignores the port.
+    const { protocol, hostname, port } = window.location;
+    const otherPort = port === '8443' ? '8444' : '8443';
+    const onAdminHost = manifest({
+      surfaces: [{ type: 'admin_page', url: `${protocol}//${hostname}:${otherPort}/app/` }],
+    });
+    fakeSessionStart('installation-1', installation({ manifest: onAdminHost }));
+
+    await renderAdminApp(APP_ROUTE, { labs });
+
+    await expect.element(appsScreen.notFramed()).toBeVisible();
     await expect.element(appsScreen.frame()).not.toBeInTheDocument();
   });
 
@@ -1357,7 +1377,10 @@ describe('Managing apps', () => {
     await renderAdminApp(DETAILS_ROUTE, { labs });
 
     const details = appsScreen.details();
-    await expect.element(details).toHaveTextContent('Example Audio');
+    await expect
+      .element(details)
+      .toHaveTextContent(/Made by\s*Example Audio\s*Unverified developer/);
+    await expect.element(appsScreen.unverifiedDeveloperBadge()).toBeVisible();
     await expect
       .element(appsScreen.capabilities().last())
       .toHaveTextContent('Read and write data to podcast.example.net');
@@ -1483,6 +1506,10 @@ describe('Managing apps', () => {
 
     const dialog = appsScreen.uninstallDialog();
     await expect.element(dialog).toHaveTextContent('Uninstall Podcast?');
+    // Ghost can't stop a copy that's already open elsewhere, so it doesn't say it does.
+    await expect
+      .element(dialog)
+      .toHaveTextContent('The app stops opening for everyone. Where it’s already open');
     await expect
       .element(appsScreen.integrationKeyNote())
       .toHaveTextContent('Settings › Integrations');
