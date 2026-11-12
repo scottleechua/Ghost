@@ -1247,7 +1247,7 @@ services:
           - core/server/web/comments/routes.js
           - core/server/services/comments/comments-service.js
           - core/server/services/members-events/last-seen-at-updater.js
-          - core/shared/events/member-comment-event.js
+          - core/shared/events/member-comment-event.ts
         tests:
           - test/e2e-api/admin/comments.test.js
           - test/e2e-api/admin/member-commenting.test.js
@@ -1471,17 +1471,17 @@ services:
     contracts:
       exports:
         summary: >-
-          The TypeScript root exports synchronous init and Promise-returning importCSV,
-          handleJob and allSettled functions. importCSV and handleJob throw synchronously
+          The TypeScript root exports synchronous init and Promise-returning importCSV and
+          handleJob functions. importCSV and handleJob throw synchronously
           before initialization; request-schema errors also throw synchronously, whereas
-          accepted import preparation and handler failures reject promises. allSettled before
-          init resolves. The deep ContentCSVImportJob class carries serializable upload,
-          mapping, recipient and run metadata; it is a job definition, not another root.
-          Units assert the pre-init handler/drain path and injected job serialization. A
+          accepted import preparation and handler failures reject promises.
+          The deep ContentCSVImportJob class carries serializable upload,
+          mapping, recipient, row count and run metadata; it is a job definition, not another root.
+          Units assert the pre-init handler path and injected job serialization. A
           separately imported root in HTTP tests checks pre-init import, two successful init
           calls, schema errors and asynchronous unreadable-file rejection. Root units also
-          assert pre-init request/job errors, harmless pre-init draining, validation before
-          forwarding and retained request/job/drain receivers.
+          assert pre-init request/job errors, validation before
+          forwarding and retained request/job receivers.
         sources:
           - core/server/services/content-import/index.ts
           - core/server/services/content-import/import/schema.ts
@@ -1521,11 +1521,10 @@ services:
           metadata/mapping and the current user's email, and returns HTTP 202 with import_id
           and total after staging, preflight and dispatch. Authentication, feature flag,
           upload validation and content-import permission belong to HTTP/API layers. Jobs
-          registration awaits root handleJob for content-csv-import; the separate
-          site-content-import job is outside this root. Production shutdown does not call
-          its test-facing allSettled. Real booted HTTP tests assert role/flag gates, report
+          registration, given the root by boot, awaits handleJob for content-csv-import; the separate
+          site-content-import job is outside this root. Real booted HTTP tests assert role/flag gates, report
           mail through a mocked transport, persisted posts/relations and intercepted remote
-          media. The handler unit only reaches the real root's pre-init error. Webhook tests
+          media. The handler unit uses a stub root to assert forwarding and rejection. Webhook tests
           include a normal-publish control, then assert two imported rows including an
           update, two completion emails, no Email rows and bounded webhook silence.
         sources:
@@ -1547,7 +1546,7 @@ services:
           dispatch and processing require them later. The request needs owner lookup when
           no caller email exists, readable local staging and settings for batch tags; jobs
           additionally need converters, models/storage and optional URL lookup. Real HTTP
-          tests establish selected normal boot-to-job outcomes, while root/handler units
+          tests establish selected normal boot-to-job outcomes, while root units
           establish early errors. Root units additionally assert late dependency acquisition
           and failed-construction retry; held boot readiness and same-process boot contracts
           remain outside their coverage.
@@ -1558,22 +1557,19 @@ services:
           - core/server/services/jobs-service/register-job-handlers.ts
         tests:
           - test/unit/server/services/content-import/index.test.ts
-          - test/unit/server/services/jobs-service/register-job-handlers.test.ts
           - test/e2e-api/admin/posts-importer.test.js
       lifetime:
         summary: >-
           There is no reset, stop, abort or public implementation accessor. The module retains
-          its graph across init calls; run records are mutable, in memory and normally
-          released after completion email. finish/fail alone do not settle waiters; release
-          resolves them when the map becomes empty. Lazy age/count eviction excludes running
-          runs. Media promises, including failed results, are cached by exact URL within one
-          job, not across jobs. Store units assert retention/eviction and two-run release
-          waiting; media units hold an import to prove sharing, and assert separate-instance
-          isolation. Root units retain the same request/job/drain receiver and call handleJob
+          its graph across init calls; run records are mutable, in memory, created when the
+          job starts and released after its completion email.
+          Media promises, including failed results, are cached by exact URL within one
+          job, not across jobs. Store units assert finished runs stay regardless of age or count;
+          media units hold an import to prove sharing, and assert separate-instance
+          isolation. Root units retain the same request/job receiver and call handleJob
           directly after repeated init. Dispatch is stubbed; the jobs backend queue is not
           exercised. Duplicate/concurrent job handling and late admissions during shutdown
-          remain source-only. The importer drain test awaits handle before
-          checking settlement, so it cannot establish the final cleanup boundary.
+          remain source-only.
         sources:
           - core/server/services/content-import/index.ts
           - core/server/services/content-import/import/store.ts
@@ -1619,7 +1615,7 @@ services:
           stored assets/media are not compensated for later row or mail failures. Posts use
           individual DB transactions, not one import transaction. Handler finally awaits
           extracted-source cleanup and best-effort mail, releases the run, then awaits staged
-          deletion: allSettled can finish before that last deletion. Units and filesystem
+          deletion: a test that waits for the mail can finish first. Units and filesystem
           integration assert selected cleanup, asset rollback and cache behavior; real HTTP
           tests assert file removal under injected storage failures and contributor/tag DB
           rollback under a rejected post write. They do not prove root/job shutdown drains
@@ -1643,7 +1639,7 @@ services:
       failures:
         summary: >-
           Owner lookup fails before staging; invalid/staging/parser/cap failures reject before
-          dispatch, and dispatch failure releases the run with best-effort staged cleanup.
+          dispatch, and dispatch failure removes the staged file best-effort.
           Expected row validation, media and DB write failures are recorded and later rows
           continue. All attempted writes failing reports an aggregate but still marks the
           run complete; unexpected preparation/converter/media failures reject the handler.
@@ -1676,7 +1672,7 @@ services:
       - >-
         Characterize the release-before-staged-deletion drain boundary with a held cleanup,
         then define root/job ownership for admission, cancellation, mail and filesystem drain.
-        Existing allSettled coverage does not prove complete handler settlement or restart.
+        Waiting for the completion mail does not prove complete handler settlement or restart.
       - >-
         Preserve staged-file ownership when storage changes between stage/remove; cover
         cleanup failure masking, orphan recovery and bounded CSV/archive resources. The row
@@ -2674,7 +2670,7 @@ services:
           Wrappers expose service plus startFetch and individual count-returning fetch methods;
           service exposes mutable status references, scheduling/cancellation and detailed fetch
           results. The CommonJS jobs entry exports three receiver-independent async scheduling
-          functions, all no-ops in test environments. Root units substitute wrapper constructors
+          functions, all no-ops under the testing configs. Root units substitute wrapper constructors
           and assert pre-init guards, distinct identities, constructor arguments and repeated
           init retention. Admin HTTP snapshots assert initial newsletter status, not scheduling
           or cancellation completion. Exact return/receiver behavior is otherwise source-only.
@@ -4383,7 +4379,7 @@ services:
           incomplete graph. Scheduler sets, renderer template/partial promises including rejected
           promises, mail transport and recurring-job flags survive same-process stop. Flags are
           set only after successful scheduling, without an in-flight guard. Job tests assert
-          sequential scheduling once, test skipping and cron hour shape; they do not exercise
+          sequential scheduling once and cron hour shape; they do not exercise
           concurrent calls, failed scheduling or backend replacement. Durable gifts/deliveries
           survive separately: real database tests assert single winners for concurrent pending
           and stale claims and sequential outcome precedence, not process restart or lease renewal.
@@ -4995,7 +4991,7 @@ services:
           - core/server/api/endpoints/integrations.js
           - core/server/web/api/endpoints/admin/routes.js
           - core/server/api/endpoints/utils/serializers/input/integrations.js
-          - core/server/api/endpoints/utils/serializers/output/mappers/integrations.js
+          - core/server/api/endpoints/utils/serializers/output/mappers/integrations.ts
           - core/server/models/integration.js
         tests:
           - test/e2e-api/admin/integrations.test.js
@@ -5066,7 +5062,7 @@ services:
           - core/server/services/integrations/integrations-service.js
           - core/server/api/endpoints/integrations.js
           - core/server/api/endpoints/utils/serializers/input/integrations.js
-          - core/server/api/endpoints/utils/serializers/output/mappers/integrations.js
+          - core/server/api/endpoints/utils/serializers/output/mappers/integrations.ts
           - core/server/models/api-key.js
         tests:
           - test/e2e-api/admin/integrations.test.js
@@ -5694,8 +5690,8 @@ services:
         complexity: complex
         reason: >-
           Queue/backend, logging, reporting and outbox dependencies are mostly injected, but
-          register-job-handlers imports job classes across services and directly reaches Content
-          Import, Update Check and Signing Keys. It is application composition inside the queue
+          register-job-handlers imports job classes across services and receives every handler's
+          service from boot. It is application composition inside the queue
           implementation, and registration must occur after its service dependencies exist.
         preparation:
           - >-
@@ -5777,7 +5773,7 @@ services:
       consumers:
         summary: >-
           Source inspection establishes these callers: boot injects the instance into
-          retained mentions and email consumers and a fresh site importer. Members, content CSV imports, the media API and email analytics
+          retained mentions and email consumers and a fresh site importer. Members, content CSV imports, the media inliner and email analytics
           resolve it when dispatching or scheduling. Gift/member cleanup, signing keys,
           update checks and Tinybird schedule through boot-supplied references. The default
           backend runs jobs in-process; registered handlers call initialized domain services.
@@ -5794,7 +5790,7 @@ services:
           - core/server/data/importer/index.js
           - core/server/services/members/service.js
           - core/server/services/content-import/index.ts
-          - core/server/api/endpoints/db.js
+          - core/server/services/media-inliner/index.ts
           - core/server/services/email-analytics/jobs/index.js
           - core/server/services/email-analytics/jobs/email-analytics-job-scheduler.ts
           - core/server/services/gifts/jobs/index.js
@@ -5990,8 +5986,8 @@ services:
           - core/server/services/settings-helpers/settings-helpers.js
           - core/server/services/themes/installer.js
           - core/server/api/endpoints/themes.js
-          - core/server/api/endpoints/utils/validators/input/files.js
-          - core/server/api/endpoints/utils/validators/input/media.js
+          - core/server/api/endpoints/utils/validators/input/files.ts
+          - core/server/api/endpoints/utils/validators/input/media.ts
           - core/server/services/members-metafields/index.ts
           - core/server/services/members-metafields/custom-fields.ts
         tests:
@@ -6073,8 +6069,8 @@ services:
           - core/server/data/db/connection.ts
           - core/server/services/newsletters/newsletters-service.js
           - core/server/services/email-service/email-service.js
-          - core/server/api/endpoints/utils/validators/input/files.js
-          - core/server/api/endpoints/utils/validators/input/media.js
+          - core/server/api/endpoints/utils/validators/input/files.ts
+          - core/server/api/endpoints/utils/validators/input/media.ts
         tests:
           - test/e2e-api/admin/host-limits.test.ts
           - test/e2e-api/admin/newsletters.test.js
@@ -6961,8 +6957,8 @@ services:
         complexity: straightforward
         reason: >-
           The root composes models, the three storage adapters, live upload configuration,
-          logging, the external request client, URL utilities and lazy file-type and HEIC
-          loaders in index.ts; the implementation receives them through its constructor and
+          logging, the external request client, URL utilities, a job dispatcher and lazy
+          file-type and HEIC loaders in index.ts; the implementation receives them through its constructor and
           keeps first-use loading and the fallback on a failed file-type load. mime-types, path,
           node:vm and the shared image-content and svg-sanitizer helpers are stateless and stay
           imported directly under exact allowances; no disallowed dependency remains.
@@ -6985,8 +6981,10 @@ services:
           The TypeScript root default-exports a defineService initializer with init and a
           service getter that throws IncorrectUsageError until the inliner is published; there
           is no shutdown/reset and no extras. The deep module exports ExternalMediaInliner,
-          including receiver-dependent importUrl and inline plus processing helpers and static
-          findMatches. importUrl resolves stored/failed result objects; inline resolves undefined.
+          including receiver-dependent startInlining, importUrl and inline plus processing
+          helpers and static findMatches. importUrl resolves stored/failed result objects;
+          startInlining and inline resolve undefined. Seam units pin startInlining's queued log,
+          job and default domains.
           Unit tests pin injected importUrl stages and helpers. Root units pin the getter throwing
           before init, init resolving undefined and the getter then returning the same ready
           inliner synchronously.
@@ -6996,13 +6994,15 @@ services:
           - core/server/services/media-inliner/types.ts
         tests:
           - test/unit/server/services/media-inliner/test/external-media-inliner.test.js
+          - test/unit/server/services/media-inliner/external-media-inliner-seams.test.ts
           - test/unit/server/services/media-inliner/root.test.ts
       construction:
         summary: >-
           Importing the root creates no inliner. The first init loads the class, models and
           collaborators, obtains the media/image/file adapters and creates one inliner with
           retained models, logging, the external request client, URL utilities, lazy codec
-          loaders and a storage callback; later init calls return the same instance. The factory
+          loaders, a storage callback and a job dispatcher that looks up the jobs service on each
+          call; later init calls return the same instance. The factory
           is synchronous, so the kernel publishes once its promise settles. Construction only
           stores references, but requiring the request client creates shared HTTP/HTTPS agents.
           Root tests stub adapter lookup and exercise the resulting selector, and pin that import
@@ -7019,8 +7019,9 @@ services:
       consumers:
         summary: >-
           Boot passes the ready service to a retained external-media job handler. Admin
-          db.inlineMedia dispatches explicit/default domains and returns after enqueue, not
-          completion. Content import instead reads the service getter when creating each run's
+          db.inlineMedia reads the service getter per request and calls startInlining, which
+          dispatches explicit/default domains and returns after enqueue, not completion.
+          Content import reads the service getter when creating each run's
           PostMediaInliner, which retains that instance and caches URL promises across its rows.
           Handler/endpoint units use stubs; a real job integration proves a stored feature-image
           URL and completion log. CSV HTTP tests cover real referenced-media composition,
@@ -7033,12 +7034,14 @@ services:
           - core/server/services/jobs-service/register-job-handlers.ts
           - core/server/services/jobs-service/jobs-service.ts
           - core/server/api/endpoints/db.js
+          - core/server/services/media-inliner/external-media-inliner.js
           - core/server/services/content-import/index.ts
           - core/server/services/content-import/import/importer.ts
           - core/server/services/content-import/import/media.ts
         tests:
           - test/unit/server/services/jobs-service/register-job-handlers.test.ts
           - test/unit/api/endpoints/db.test.js
+          - test/unit/server/services/media-inliner/external-media-inliner-seams.test.ts
           - test/integration/services/media-inliner/external-media-inliner-job.test.ts
           - test/e2e-api/admin/posts-importer.test.js
           - test/unit/server/services/content-import/import/media.test.ts
@@ -8001,8 +8004,7 @@ services:
           dependencies. Cleanup task closures and successful schedule flags persist
           independently; concurrent scheduling is not promise-coalesced. Repeat migration tests
           pin database-run guards, not these identities. Expired-comped scheduling units assert
-          two sequential calls schedule once; token scheduling only checks a single production
-          call and test suppression.
+          two sequential calls schedule once; token scheduling only checks a single call.
           Historical evidence removed after auditedAt: [Members migration tests](https://github.com/TryGhost/Ghost/blob/bf6a3ea2e32b7b551980c02c745e3c9b74e3ea0e/ghost/core/test/e2e-server/services/members-migrations.test.ts).
         sources:
           - core/server/services/members/service.js
@@ -8448,7 +8450,8 @@ services:
           resolves a namespace's policy (owner and limits) and refuses what it doesn't allow. Definitions
           exposes asynchronous CRUD/reorder and addOne/find/recordCreated helpers; values
           exposes synchronous unwrapWire plus asynchronous read/plan/apply/feed methods; bindings exposes asynchronous
-          bind/remove/planning. HTTP tests assert selected serialized definitions, values, access
+          bind/remove/planning, which of a set of ports are bound and the field each names, and
+          whether any port writes into a field. HTTP tests assert selected serialized definitions, values, access
           rules and provenance; they do not pin the root export shape or init return timing.
         sources:
           - core/server/services/members-metafields/index.ts
@@ -8471,8 +8474,8 @@ services:
           values receives the ceiling callback; all three receive the field source. Constructors
           store dependencies without querying or starting work.
           The shared DB getter can create the module-cached Knex client if not already loaded.
-          No other production construction of these classes was found. Binding units construct
-          the class with fake query/values collaborators, not the root or publication sequence.
+          No other production construction of these classes was found. HTTP covers the
+          bindings only through the published root.
         sources:
           - core/server/services/members-metafields/index.ts
           - core/server/services/members-metafields/namespaces.ts
@@ -8483,18 +8486,21 @@ services:
           - core/server/data/db/index.js
           - core/server/data/db/connection.ts
         tests:
-          - test/unit/server/services/members-metafields/bindings-service.test.ts
+          - test/e2e-api/members/webhooks.test.js
       consumers:
         summary: >-
           Admin/member endpoints use definitions; members retains values for BREAD, account,
           member deletion and activity feeds, and definitions/values for CSV import/export.
           Webhooks read values through members BREAD. The Stripe Checkout config reads fields
           through the exported field source. Member filtering and API serialization
-          also deep-import helpers. No production calls to the exported bindings service were
-          found in the inspected Core source after checkout collection was removed; it remains
-          constructed and exported. Real HTTP asserts field/value visibility, CSV cells/import
-          provenance, filter matches and filtered bulk actions. Binding units exercise planning
-          with fake query/value collaborators, not a production consumer.
+          also deep-import helpers. The Stripe Checkout config binds and removes ports through the
+          exported bindings service, the Stripe webhook plans collected values through it, the tiers
+          root reads which ports are bound, and which field each names, through it, and the custom
+          fields endpoints ask it whether a field is bound before clearing the site cache.
+          The member account saves the answers a member gives with a change of tier through it, as
+          a checkout does. Real HTTP asserts field/value visibility, CSV cells/import
+          provenance, filter matches, filtered bulk actions, and what checkouts and a member's
+          change of tier save through ports, with their provenance and refusals.
         sources:
           - core/server/api/endpoints/member-metafields.ts
           - core/server/api/endpoints/member-metafields-members.ts
@@ -8512,13 +8518,17 @@ services:
           - core/server/models/member.js
           - core/server/services/members-metafields/filter.ts
           - core/server/services/members-metafields/index.ts
+          - core/server/services/stripe-checkout-config/index.ts
+          - core/server/services/stripe/stripe-service.js
+          - core/server/services/tiers/index.ts
         tests:
           - test/e2e-api/admin/member-custom-fields.test.ts
           - test/e2e-api/members/custom-fields.test.ts
           - test/e2e-api/admin/members-import-custom-fields.test.ts
           - test/e2e-api/admin/members-exporter-custom-fields.test.ts
           - test/e2e-api/admin/members-filter-custom-fields.test.ts
-          - test/unit/server/services/members-metafields/bindings-service.test.ts
+          - test/e2e-api/members/member-answers.test.ts
+          - test/e2e-api/members/webhooks.test.js
       startup:
         summary: >-
           Boot calls init during initCore after database/settings/signing-key/i18n setup and
@@ -8604,11 +8614,11 @@ services:
         summary: >-
           Invalid plans reject before writes; malformed value leaves are logged/omitted and
           malformed history field lists become empty, while invalid definition decoding rejects
-          the read. Bindings skip unresolved/invalid rows and return ordered good plans plus the
-          first failure. Definition action failures are logged after data writes. Multi-property definition edits are not atomic; limit
+          the read. Bindings skip unresolved/invalid rows, and return the plans for the values
+          accepted, one per writer, beside every refusal named by port; a failed lookup rejects. Definition action failures are logged after data writes. Multi-property definition edits are not atomic; limit
           counting deliberately permits concurrent overshoot, and applying a plan does not
           revalidate its captured definition. HTTP asserts selected refusals/corrupt reads and
-          successful actions; fake binding/import tests assert continuation/reporting.
+          successful actions; webhook HTTP and fake import tests assert continuation/reporting.
           Action failure, partial edits, stale plans and concurrency guarantees remain untested.
         sources:
           - core/server/services/members-metafields/definitions-service.ts
@@ -8619,7 +8629,7 @@ services:
         tests:
           - test/e2e-api/admin/member-custom-fields.test.ts
           - test/e2e-api/members/custom-fields.test.ts
-          - test/unit/server/services/members-metafields/bindings-service.test.ts
+          - test/e2e-api/members/webhooks.test.js
           - test/unit/server/services/members/import-export/import/error-handling.test.ts
     unverified: []
     blockers:
@@ -8770,8 +8780,8 @@ services:
           - core/boot.js
           - core/server/services/mentions/index.ts
           - core/server/api/endpoints/mentions.js
-          - core/server/api/endpoints/utils/serializers/input/mentions.js
-          - core/server/api/endpoints/utils/serializers/output/mappers/mentions.js
+          - core/server/api/endpoints/utils/serializers/input/mentions.ts
+          - core/server/api/endpoints/utils/serializers/output/mappers/mentions.ts
           - core/server/web/api/endpoints/admin/routes.js
           - core/server/web/webmentions/routes.js
           - core/server/services/mentions/mention-controller.js
@@ -9835,7 +9845,7 @@ services:
           fields; a JSON mention page yields null metadata with its body and content type.
         sources:
           - core/server/api/endpoints/oembed.js
-          - core/server/api/endpoints/utils/validators/input/oembed.js
+          - core/server/api/endpoints/utils/validators/input/oembed.ts
           - core/server/api/endpoints/utils/serializers/output/oembed.js
           - core/server/api/endpoints/utils/serializers/output/mappers/oembed.js
           - core/server/web/api/endpoints/admin/routes.js
@@ -12725,10 +12735,10 @@ services:
         summary: >-
           Boot initializes the root and later supplies the jobs instance. Identity tokens and
           the staff JWKS app retain staff providers; members API construction retains a
-          members provider for signing, verification and public keys. The check-signing-keys
-          job handler instead reads the root service getter for each run. Handler tests register
-          before root initialization, then verify deferred access, awaiting the check and propagation
-          of its original rejection. Existing HTTP tests cover
+          members provider for signing, verification and public keys. Boot passes the ready
+          service to the check-signing-keys job handler. A boot unit asserts that forwarding; readiness
+          before registration remains source evidence. Handler tests use a stub service to
+          verify the check runs and its rejection propagates. Existing HTTP tests cover
           both JWKS responses and staff-token verification, not live rotation through those
           retained HTTP consumers.
         sources:
@@ -12742,15 +12752,16 @@ services:
           - test/e2e-server/well-known.test.ts
           - test/e2e-api/members/well-known.test.js
           - test/legacy/api/admin/identities.test.js
+          - test/unit/boot/init-services.test.ts
           - test/unit/server/services/jobs-service/register-job-handlers.test.ts
       startup:
         summary: >-
           initCore awaits init after settings and before token/JWKS consumers. check advances
           due rotation and initiates replacement of weak keys. After jobs startup,
           background boot calls extras.scheduleCheckJob, which stores the jobs reference and checks
-          rotation state. Registration is skipped in test environments, without jobs, or after
+          rotation state. Registration is skipped without jobs or after
           a prior successful schedule; the guard is set only after registration resolves. Root
-          tests cover idle/rotating state, test-environment suppression, registration awaiting,
+          tests cover idle/rotating state, registration awaiting,
           sequential deduplication and retry, plus rotation before and after jobs are supplied.
           Boot units hold settings initialization, settings synchronization and signing-key
           initialization pending; they also hold background registration and verify continuation
@@ -13991,9 +14002,10 @@ services:
       construction:
         summary: >-
           Boot awaits init in initCore after the custom fields services. The initializer builds
-          the config service with knex, its history recorder, logging and the custom field
-          bindings it saves the shipping address and phone number into, and throws if those
-          bindings aren't set up yet. It builds the checkout service over that config service,
+          the config service with knex, its history recorder, logging, the custom fields' field
+          source, the custom field bindings it saves the shipping address and phone number into,
+          and the tier requirements, looked up from the tiers root on each use as tiers start later
+          in boot, and throws if the custom fields services aren't set up yet. It builds the checkout service over that config service,
           labs and logging, the preview service with that checkout service and lookups of Stripe,
           tiers and the members payments service made per preview, and the branding service with
           lookups of Stripe made per read, as those start later in boot. Later init calls keep
@@ -14634,8 +14646,10 @@ services:
       exports:
         summary: >-
           The TypeScript root default-exports a defineService root with async init and no
-          shutdown/reset. Its service, holding api and repository, throws IncorrectUsageError
-          before initialization. The API exposes async
+          shutdown/reset. Its service, holding api, repository and requirements, throws
+          IncorrectUsageError before initialization. requirements reads and writes tier
+          requirements, which the Stripe Checkout config looks up on each use, and the repository
+          reads them for a tier on each read that asks for them. The API exposes async
           browse/read/readDefaultTier/add/edit; browse returns one-page metadata, read returns
           null for a missing valid ID and readDefaultTier can return undefined. API units use
           the separate in-memory repository: they assert edited name, archived status, browse
@@ -14651,19 +14665,24 @@ services:
           - test/unit/server/services/tiers/tiers-api.test.js
       construction:
         summary: >-
-          The root's factory creates TierRepository with Product and DomainEvents, and a slug
-          collaborator calling Product.generateSlug. It awaits loading products with benefits,
-          then builds TiersAPI and returns both for publication together. This is the only
-          production construction path found for these two implementations. Deep Tier and event
+          The root's factory creates TierRequirements over knex, logging and the custom fields
+          bindings, which boot sets up first, refusing to start before the custom fields services
+          are set up, and TierRepository with Product, DomainEvents and the
+          requirements, and a slug collaborator calling Product.generateSlug. It awaits loading
+          products with benefits, then builds TiersAPI and returns all three for publication
+          together. This is the only
+          production construction path found for these three implementations. Deep Tier and event
           classes support that graph; the in-memory tier repository is used by API units, not
           production composition. Root units pin the benefits load, the API reading through the
           published repository, TierCreatedEvent dispatch through DomainEvents, and slugs from
           the current Product model while the repository saves through the model read at init.
         sources:
           - core/server/services/tiers/index.ts
+          - core/server/services/tiers/requirements.ts
           - core/server/services/tiers/tier-repository.js
           - core/server/services/tiers/tiers-api.js
           - core/server/services/tiers/tier.js
+          - core/server/services/members-metafields/index.ts
           - test/unit/server/services/tiers/in-memory-tier-repository.ts
         tests:
           - test/unit/server/services/tiers/index.test.ts
@@ -14671,7 +14690,10 @@ services:
         summary: >-
           Source searches found boot, Admin/Content tier endpoints, post/page/
           preview/email-post serializers, members imports/access middleware/controllers, gifts
-          and Stripe checkout previews. These consumers resolve the service's api at use; the
+          and Stripe checkout previews, and the Stripe Checkout config reads and writes tier
+          requirements through service.requirements on each use, which the member account also reads
+          when a member changes tier. These consumers resolve the
+          service's api at use; the
           Members API and gift services receive a getter that does so, and payments deep-imports
           three tier event classes. The preview callback resolves the current api.read for each
           request. Its HTTP tests assert refusal of free, absent and malformed tiers, but do not
@@ -14720,7 +14742,7 @@ services:
           then awaits tiers.init alongside members.init. Tier loading must complete before that
           group and boot can finish; members and gifts deliberately hold getters before the
           service is available. defineService shares one pending initialization between
-          overlapping calls, as its kernel units cover. Root units pin publication only after priming resolves, nothing published and a
+          overlapping calls, as its kernel units cover. Root units pin refusing to start before the custom fields services are set up, publication only after priming resolves, nothing published and a
           retry loading again after priming or API construction rejects, sequential init
           retaining both instances without reloading, and overlapping calls settling with an API
           over the published repository. Boot units pin gifts constructed before tiers.init
@@ -15424,8 +15446,8 @@ services:
         tests: []
       consumers:
         summary: >-
-          Boot calls scheduleJobs and centrally registers UpdateCheckJob with a handler that
-          awaits the root with rethrowErrors true on the shared default jobs lane. The current
+          Boot calls scheduleJobs and passes the root to the central UpdateCheckJob handler, which
+          awaits it with rethrowErrors true on the shared default jobs lane. The current
           in-memory backend invokes that handler in-process; no separate update-check worker,
           CLI or HTTP consumer was found. The checker itself calls API pipelines with internal
           context to read/write the due date, resolve active Owner/Administrator recipients
