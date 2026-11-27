@@ -11,8 +11,7 @@ import {
   CHECKOUT_PORTS,
   type CheckoutPort,
 } from '@tryghost/checkout';
-import type { FieldStatus } from '../members-metafields/schema';
-import type { FieldSource } from '../members-metafields';
+import type { FieldSource, FieldStatus } from '../members-metafields';
 import type {
   RequiredTiers,
   SetRequirement,
@@ -26,7 +25,8 @@ import {
   KeySchema,
 } from '@tryghost/metafield-types/identity';
 import { toDatabaseDate } from '../../lib/db-types/date';
-import type { RecordCheckoutConfigAction, RequestContext } from './actions';
+import type { RequestContext } from '../../lib/actor';
+import { StripeCheckoutConfigSaved, type OnStripeCheckoutConfigUpdated } from './changes';
 import { configRow, type ConfigRowSchema } from './codec';
 import {
   COLLECTED_NOUNS,
@@ -41,6 +41,7 @@ import {
 import { CONFIG_SLUG, CONFIG_TABLE, DbConfigParts } from './schema';
 import { parseRequest } from '../../lib/parse-request';
 import { CheckoutConfigInput } from './serializers';
+import { ensureTransaction } from '../../lib/ensure-transaction';
 
 // A `custom_field_key` is a key in the publisher's `custom` namespace, so the config reads and
 // checks only the bindings and fields there.
@@ -250,12 +251,12 @@ const LockedBinding = z.object({ port: z.enum(CHECKOUT_PORTS), metafield_key: Ke
 /** Points a port at a field, or stops it writing anywhere. */
 export interface PortBinder {
   bind(
-    db: Knex,
     port: string,
     field: Pick<Identity, 'namespace' | 'key'>,
     now: Date,
+    executor: Knex,
   ): Promise<string>;
-  remove(db: Knex, port: string): Promise<void>;
+  remove(port: string, executor: Knex): Promise<void>;
 }
 
 /** The custom fields as the metafields domain reads them for this site. */
@@ -267,7 +268,7 @@ export type TierRequirements = Pick<TierRequirementsService, 'browse' | 'require
 /** Reads and saves the site-wide Stripe Checkout config. */
 export class StripeCheckoutConfigService {
   private knex: Knex;
-  private recordAction: RecordCheckoutConfigAction;
+  private onStripeCheckoutConfigUpdated: OnStripeCheckoutConfigUpdated;
   private bindings: PortBinder;
   private fields: FieldReads;
   private requirements: () => TierRequirements;
@@ -275,14 +276,15 @@ export class StripeCheckoutConfigService {
 
   constructor({
     knex,
-    recordAction,
+    onStripeCheckoutConfigUpdated,
     bindings,
     fields,
     requirements,
     logging,
   }: {
     knex: Knex;
-    recordAction: RecordCheckoutConfigAction;
+    /** Called with each change a command makes, inside the command's transaction. */
+    onStripeCheckoutConfigUpdated: OnStripeCheckoutConfigUpdated;
     bindings: PortBinder;
     fields: FieldReads;
     /** Looked up on each use, as tiers are set up after the config. */
@@ -290,7 +292,7 @@ export class StripeCheckoutConfigService {
     logging: GhostLogger;
   }) {
     this.knex = knex;
-    this.recordAction = recordAction;
+    this.onStripeCheckoutConfigUpdated = onStripeCheckoutConfigUpdated;
     this.bindings = bindings;
     this.fields = fields;
     this.requirements = requirements;
@@ -303,9 +305,13 @@ export class StripeCheckoutConfigService {
    *
    * A collected part is on while tiers list its requirement. Any of its fields being deleted
    * takes its binding with it, which reads as off.
+   *
+   * Read in one transaction, as the requirements are a second query, so a save committing in
+   * between can't pair one save's bindings with another's requirements. Given a transaction as
+   * `executor` it reads inside that transaction; given a plain connection it opens its own.
    */
-  async read(): Promise<StripeCheckoutConfig> {
-    return this.readSaved();
+  async read(executor: Knex = this.knex): Promise<StripeCheckoutConfig> {
+    return ensureTransaction(executor, (trx) => this.readSaved(trx));
   }
 
   /**
@@ -314,16 +320,21 @@ export class StripeCheckoutConfigService {
    *
    * Parts given unsaved take the place of the saved ones, refused as saving them would be, so a
    * preview asks for each part exactly as checkouts would once it was saved. Nothing is written.
+   * Given a transaction as `executor` it reads inside that transaction; given a plain connection
+   * it opens its own.
    */
-  async readForCheckout(unsaved: RequestedParts = {}): Promise<CheckoutSessionConfig> {
+  async readForCheckout(
+    unsaved: RequestedParts = {},
+    executor: Knex = this.knex,
+  ): Promise<CheckoutSessionConfig> {
     const changes = changesOf(unsaved);
     // Checked in the same transaction as the read, so both see the same tiers and fields.
-    const saved = changes.length
-      ? await this.knex.transaction(async (trx) => {
-          await assertTargets(trx, changes, this.fields);
-          return this.readSaved(trx);
-        })
-      : await this.readSaved();
+    const saved = await ensureTransaction(executor, async (trx) => {
+      if (changes.length) {
+        await assertTargets(trx, changes, this.fields);
+      }
+      return this.readSaved(trx);
+    });
     const config = { ...saved, ...unsaved };
     return {
       design: config.design,
@@ -337,13 +348,9 @@ export class StripeCheckoutConfigService {
 
   /**
    * The config as saved, with the paid tiers each part is required on, and the custom field each
-   * port is bound to. Read in one transaction, as the requirements are a second query, so a save
-   * committing in between can't pair one save's bindings with another's requirements.
+   * port is bound to.
    */
-  private async readSaved(db?: Knex.Transaction): Promise<StripeCheckoutConfig> {
-    if (!db) {
-      return this.knex.transaction((trx) => this.readSaved(trx));
-    }
+  private async readSaved(db: Knex.Transaction): Promise<StripeCheckoutConfig> {
     const rows = z.array(ReadRow).parse(
       await db(`${CONFIG_TABLE} as config`)
         // Every port in one join, so the rows grow with the ports rather than with a join per
@@ -368,7 +375,7 @@ export class StripeCheckoutConfigService {
     }
     // A part is on only while tiers list its requirement, so checkouts never ask for more than
     // tiers say their members must give.
-    const listed = await this.requirements().browse({ transacting: db });
+    const listed = await this.requirements().browse(db);
     const { design } = z.decode(this.configRow, first);
     return {
       design,
@@ -384,16 +391,23 @@ export class StripeCheckoutConfigService {
   }
 
   /**
-   * Saves the parts of the config that the request includes, and records the save in the staff
-   * history.
+   * Saves the parts of the config that the request includes, and reports the save as an edit of
+   * the config.
    *
    * The tiers and fields the collected parts name are checked inside the same transaction as
    * the write, with their rows locked, so nothing can change between the check and the write.
    *
    * Says whether it changed what tiers list to anyone: a requirement, whether each of its ports is
    * bound, or the field a port names.
+   *
+   * Given a transaction as `executor` it joins that transaction; given a plain connection it
+   * opens its own.
    */
-  async edit(context: RequestContext, input: unknown): Promise<{ changedRequirements: boolean }> {
+  async edit(
+    context: RequestContext,
+    input: unknown,
+    executor: Knex = this.knex,
+  ): Promise<{ changedRequirements: boolean }> {
     const { design, ...requested } = parseRequest(CheckoutConfigInput, input, 'checkout_config');
     // Only the parts in the request are written, so saving one part never overwrites another.
     const changes = changesOf(requested);
@@ -401,40 +415,48 @@ export class StripeCheckoutConfigService {
     const at = new Date();
     const now = toDatabaseDate(at);
 
-    let changedRequirements = false;
-    await this.knex.transaction(async (trx) => {
-      await assertTargets(trx, changes, this.fields);
-      const before = await this.requirements().browse({ transacting: trx });
-
+    return ensureTransaction(executor, async (trx) => {
+      // The config row is locked before anything is read, so saves run one at a time and each
+      // reads what the save before it committed. A site that has never saved has no row to lock,
+      // so an empty one is inserted first. An existing row is left as it is: merging its own slug
+      // changes nothing, and unlike ignoring the conflict it takes the row's exclusive lock, so
+      // two saves can't each hold a shared lock while waiting for the other's.
       await trx(CONFIG_TABLE)
         .insert({
           id: new ObjectID().toHexString(),
           slug: CONFIG_SLUG,
           created_at: now,
           updated_at: now,
-          ...columns,
         })
         .onConflict('slug')
-        .merge({ ...columns, updated_at: now });
+        .merge(['slug']);
+      const saved = await trx(CONFIG_TABLE).where('slug', CONFIG_SLUG).forUpdate().first('id');
+      if (!saved) {
+        throw new errors.InternalServerError({
+          message: 'The Stripe Checkout config was not found right after inserting it.',
+        });
+      }
+
+      await assertTargets(trx, changes, this.fields);
+      const before = await this.requirements().browse(trx);
+      const previous = await this.readSaved(trx);
+
+      await trx(CONFIG_TABLE)
+        .where('id', saved.id)
+        .update({ ...columns, updated_at: now });
 
       for (const change of changes) {
         await this.writeTargets(trx, change, at);
       }
-      changedRequirements = !isDeepStrictEqual(
-        before,
-        await this.requirements().browse({ transacting: trx }),
+      await this.onStripeCheckoutConfigUpdated(
+        trx,
+        context,
+        new StripeCheckoutConfigSaved(previous, await this.readSaved(trx), saved.id),
       );
+      return {
+        changedRequirements: !isDeepStrictEqual(before, await this.requirements().browse(trx)),
+      };
     });
-
-    // An existing row keeps its id, so read the id back for the history entry.
-    const saved = await this.knex(CONFIG_TABLE).where('slug', CONFIG_SLUG).first('id');
-    if (!saved) {
-      throw new errors.InternalServerError({
-        message: 'The Stripe Checkout config was not found right after saving it.',
-      });
-    }
-    await this.recordAction({ context, subject: saved.id });
-    return { changedRequirements };
   }
 
   /**
@@ -448,19 +470,19 @@ export class StripeCheckoutConfigService {
     now: Date,
   ): Promise<void> {
     if (targets) {
-      await this.requirements().require(targets.requirement, now, { transacting: trx });
+      await this.requirements().require(targets.requirement, now, trx);
       for (const { port, customFieldKey } of targets.destinations) {
         await this.bindings.bind(
-          trx,
           port,
           { namespace: CUSTOM_NAMESPACE, key: customFieldKey },
           now,
+          trx,
         );
       }
     } else {
-      await this.requirements().release(SECTION_NAMES[section], { transacting: trx });
+      await this.requirements().release(SECTION_NAMES[section], trx);
       for (const { port } of destinationsOf(section)) {
-        await this.bindings.remove(trx, port);
+        await this.bindings.remove(port, trx);
       }
     }
   }

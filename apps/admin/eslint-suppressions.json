@@ -244,11 +244,6 @@
       "count": 2
     }
   },
-  "src/layout/skip-link.tsx": {
-    "react-hooks/immutability": {
-      "count": 1
-    }
-  },
   "src/members/components/bulk-action-modals/import-members/import-members-modal.tsx": {
     "react-hooks/immutability": {
       "count": 2
@@ -628,9 +623,6 @@
   "src/shared/pickers/chip-picker.tsx": {
     "react-hooks/refs": {
       "count": 2
-    },
-    "react-hooks/set-state-in-effect": {
-      "count": 1
     }
   },
   "src/tags/detail/tag-detail.tsx": {

@@ -2,13 +2,14 @@
 
 App Installations covers a site's record of the apps it has approved: what each
 one runs, what is waiting for approval, and who did what. Apps, manifests and
-changes are defined in [App Contracts](../../../../../packages/app-contracts/CONTEXT.md).
+changes are defined in [App Contracts](../../../../../contracts/app-contracts/CONTEXT.md).
 
 ## Lifecycle
 
-1. **Install.** A publisher opens an install link, reviews the preview and
-   confirms it. The site gets a new installation, active and running that
-   manifest as its approved manifest, and pins the app's identity key.
+1. **Install.** A publisher opens an install link, reviews the preview,
+   including the scopes the app asks for, and confirms it. The site gets a new
+   installation, active and running that manifest as its approved manifest,
+   and pins the app's identity key.
 2. **Re-check.** Each time an app session starts, the manifest is fetched
    again and must pass the identity check. Silent changes are applied straight
    away. Any other change becomes
@@ -43,6 +44,14 @@ The manifest an installation runs: the version the publisher last approved, or
 a newer one the re-check applied because it had only silent changes.
 _Avoid_: active manifest, current manifest
 
+**Stored changes**:
+What a manifest row differs by from the approved manifest when the row was
+added, kept with the row: field changes by path and scope changes by scope,
+in the shape App Contracts defines for a change. An install's are compared
+against no manifest at all, so they list every scope it grants. The preview and
+the history serve them as Ghost computed them, and Admin only displays them.
+_Avoid_: diff, changelog
+
 **Pending manifest**:
 A newer manifest the re-check found that needs the publisher's approval. An
 installation has at most one; a newer one replaces it.
@@ -59,6 +68,13 @@ _Avoid_: paused, disabled
 **Uninstalled**:
 An installation that has ended. It is kept as a record and never runs again.
 _Avoid_: deleted, removed
+
+**Approved scopes**:
+The `scopes` of the approved manifest. Every scope is required, so they are
+exactly what the publisher approved. The stored changes of each manifest row
+also record which scopes were added or removed, for the history. A reinstall
+approves its scopes afresh.
+_Avoid_: granted scopes, permissions
 
 **Pinned identity key**:
 The identity key an installation was created with. It never changes: a manifest
@@ -128,10 +144,45 @@ _Avoid_: accept, update
 
 **App session**:
 One run of an installed app in Admin, started when Admin opens one of its
-pages. Starting a session re-checks the app and returns the installation. The
-session is pinned to the installation's revision at that point. Nothing is
-stored and no token is issued; the session ends when the revision changes.
-_Avoid_: login, token, connection
+pages. Starting a session re-checks the app and returns the installation and,
+for an active one, an app user token. The session is pinned to the installation's
+revision at that point. Nothing about the session is stored; it ends when the
+revision changes. Sessions open only on the `better-auth` auth engine, for a
+verified staff session of an active Administrator or the Owner.
+_Avoid_: login, connection
+
+**App user token**:
+The app token Admin sends an app's Admin API calls with, issued by Better
+Auth's OAuth provider when a session starts. It acts for the staff user, is
+bound to their staff session and lasts an hour, or until the staff session
+ends if that's sooner. Every call checks the installation is active, the user is
+active and the staff session still exists and is verified. The approved
+scopes as they are now, whatever the token or its OAuth client say, cap the
+standard permission checks the call meets; a route whose check is its own or
+none refuses apps, unless it's safe for any app. Admin's bridge allowlist
+still filters what an app can send. Only Admin holds the token; the app's
+frame never sees it. App tokens and their other kinds are defined in
+[Authentication and Authorization](../../auth/CONTEXT.md).
+_Avoid_: user token, app backend token (an app backend's own), access token
+
+**Renewal**:
+A new app user token for a session, without re-checking the app. Each renewal
+creates another token; nothing about the session is stored. A token says how
+long it lasts in seconds (`expires_in`), so Admin schedules renewal on its own
+clock. It is refused
+once the installation is suspended, uninstalled or at another revision than
+the session's, which ends the session.
+_Avoid_: refresh
+
+**OAuth client**:
+The provider's record of an installation, which its app user tokens are issued
+to. Install, approval, uninstall and session start bring it in step with the
+installation, outside the installation's transaction: the installation is the
+authority on every call, so a client out of step grants nothing. A client of
+an installation that isn't active is disabled and its tokens deleted. A token
+refused for an active installation's client brings the client in step and is
+issued once more, so renewal can't stall on a client left out of step.
+_Avoid_: app, integration
 
 **Re-check**:
 Fetching an installed app's manifest again from its approved manifest URL when
@@ -158,6 +209,10 @@ The timeline of an installation, newest first: installed, updated, suspended,
 resumed, changes approved and uninstalled. Each update, suspension and resume is
 one manifest row the re-check stored. Resumed means the app reverted the pending
 changes, so the re-check lifted the suspension, applying any silent changes.
+Each entry shows the changes stored with its manifest row, computed against
+the approved manifest when the row was added: an install lists everything it
+granted, a suspension what waits for approval, and an approval the changes of
+the manifest it approved.
 _Avoid_: audit log, activity
 
 **Actor**:

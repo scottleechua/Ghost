@@ -6,6 +6,8 @@ const {
   fixtureManager,
   configUtils,
   matchers,
+  dbUtils,
+  resetRateLimits,
 } = require('../../utils/e2e-framework');
 const { stripeMocker } = require('../../utils/e2e-framework-mock-manager');
 const models = require('../../../core/server/models');
@@ -228,7 +230,7 @@ describe('Gift Subscriptions', function () {
       const checkoutSession = getLatestCheckoutSession();
 
       assert.ok(checkoutSession, 'Checkout session should be captured');
-      assert.deepEqual(Object.keys(checkoutSession.metadata), ['ghost_gift_id']);
+      assert.deepEqual(Object.keys(checkoutSession.metadata), ['ghost_gift_id', 'ghost_site_uuid']);
       const pendingGift = await models.Gift.findOne(
         { id: checkoutSession.metadata.ghost_gift_id },
         { require: true },
@@ -250,7 +252,7 @@ describe('Gift Subscriptions', function () {
             payment_status: 'paid',
             amount_total: paidTier.monthly_price,
             currency: paidTier.currency.toLowerCase(),
-            customer: checkoutSession.customer,
+            customer: checkoutSession.customer ?? null,
             customer_details: { email: 'gift-buyer@example.com' },
             metadata: toWebhookMetadata(checkoutSession.metadata),
             payment_intent: 'pi_gift_test_123',
@@ -314,7 +316,7 @@ describe('Gift Subscriptions', function () {
         mode: 'payment',
         amount_total: paidTier.monthly_price,
         currency: paidTier.currency.toLowerCase(),
-        customer: checkoutSession.customer,
+        customer: checkoutSession.customer ?? null,
         customer_details: { email: 'delayed-gift-buyer@example.com' },
         metadata: toWebhookMetadata(checkoutSession.metadata),
       };
@@ -365,7 +367,7 @@ describe('Gift Subscriptions', function () {
         payment_status: 'unpaid',
         amount_total: paidTier.monthly_price,
         currency: paidTier.currency.toLowerCase(),
-        customer: checkoutSession.customer,
+        customer: checkoutSession.customer ?? null,
         customer_details: { email: 'failed-gift-buyer@example.com' },
         metadata: toWebhookMetadata(checkoutSession.metadata),
         payment_intent: 'pi_failed_gift',
@@ -414,7 +416,7 @@ describe('Gift Subscriptions', function () {
             mode: 'payment',
             amount_total: paidTier.monthly_price,
             currency: paidTier.currency.toLowerCase(),
-            customer: checkoutSession.customer,
+            customer: checkoutSession.customer ?? null,
             payment_status: 'paid',
             metadata: toWebhookMetadata(checkoutSession.metadata),
             payment_intent: 'pi_gift_no_email',
@@ -472,7 +474,7 @@ describe('Gift Subscriptions', function () {
             payment_status: 'paid',
             amount_total: paidTier.yearly_price,
             currency: paidTier.currency.toLowerCase(),
-            customer: checkoutSession.customer,
+            customer: checkoutSession.customer ?? null,
             customer_details: { email },
             metadata: toWebhookMetadata(checkoutSession.metadata),
             payment_intent: 'pi_gift_member_test_456',
@@ -534,7 +536,7 @@ describe('Gift Subscriptions', function () {
             payment_status: 'paid',
             amount_total: expectedAmount,
             currency: paidTier.currency.toLowerCase(),
-            customer: checkoutSession.customer,
+            customer: checkoutSession.customer ?? null,
             customer_details: { email: buyerEmail },
             metadata: toWebhookMetadata(checkoutSession.metadata),
             payment_intent: `pi_gift_multi_month_${giftSequence + 1}`,
@@ -724,7 +726,7 @@ describe('Gift Subscriptions', function () {
             payment_status: 'paid',
             amount_total: paidTier.monthly_price,
             currency: paidTier.currency.toLowerCase(),
-            customer: checkoutSession.customer,
+            customer: checkoutSession.customer ?? null,
             customer_details: { email: 'idempotent-buyer@example.com' },
             metadata: toWebhookMetadata(checkoutSession.metadata),
             payment_intent: 'pi_idempotent_test',
@@ -751,6 +753,31 @@ describe('Gift Subscriptions', function () {
         offerId: 'some-offer-id',
       });
     });
+
+    it.each([
+      ['an unknown id', '0123456789abcdef01234567'],
+      ['a malformed id', 'free'],
+    ])(
+      'refuses a gift of a tier named by %s, as no such tier exists',
+      async function (_name, tierId) {
+        const giftsBefore = (await models.Gift.findAll()).length;
+
+        const { body } = await membersAgent
+          .post('/api/create-stripe-checkout-session/')
+          .body({
+            type: 'gift',
+            tierId,
+            cadence: 'month',
+            customerEmail: 'gift-unknown-tier@example.com',
+            metadata: {},
+          })
+          .expectStatus(400);
+
+        assert.equal(body.errors[0].message, 'This tier does not exist.');
+        assert.deepEqual(stripeMocker.checkoutSessions, []);
+        assert.equal((await models.Gift.findAll()).length, giftsBefore);
+      },
+    );
   });
 
   describe('Refund a gift', function () {
@@ -782,7 +809,7 @@ describe('Gift Subscriptions', function () {
             payment_status: 'paid',
             amount_total: expectedAmount,
             currency: paidTier.currency.toLowerCase(),
-            customer: checkoutSession.customer,
+            customer: checkoutSession.customer ?? null,
             customer_details: { email: 'refund-buyer@example.com' },
             metadata: toWebhookMetadata(checkoutSession.metadata),
             payment_intent: paymentIntentId,
@@ -1567,6 +1594,217 @@ describe('Gift Subscriptions', function () {
             },
           );
         }
+      });
+
+      describe('Restricted signup sites', function () {
+        // Every test here sends a magic link from the same IP, which would otherwise exceed the sign-in enumeration limit
+        beforeEach(async function () {
+          await dbUtils.truncate('brute');
+          resetRateLimits();
+        });
+
+        async function sendGiftMagicLink({ email, giftToken }, expectedStatus) {
+          const { text: integrityToken } = await membersAgent
+            .get('/api/integrity-token/')
+            .expectStatus(200);
+
+          return membersAgent
+            .post('/api/send-magic-link/')
+            .body({
+              email,
+              emailType: 'subscribe',
+              giftToken,
+              integrityToken,
+            })
+            .expectStatus(expectedStatus);
+        }
+
+        function getMagicLinkToken(email) {
+          const mail = mockManager.assert.sentEmail({ to: email });
+          const [url] = mail.text.match(/https?:\/\/[^\s]+\/members\/\?token=[^\s]+/);
+          return new URL(url).searchParams.get('token');
+        }
+
+        it('lets a new member redeem a gift on a paid-members-only site', async function () {
+          mockManager.mockSetting('members_signup_access', 'paid');
+
+          const email = 'gift-paid-only-redeemer@test.com';
+          const gift = await createGift();
+
+          await sendGiftMagicLink({ email, giftToken: gift.get('token') }, 201);
+
+          const token = getMagicLinkToken(email);
+
+          await membersAgent
+            .get(`/?token=${token}&action=subscribe`)
+            .expectStatus(302)
+            .expectHeader('Set-Cookie', /members-ssr.*/);
+
+          await DomainEvents.allSettled();
+
+          const member = await models.Member.findOne({ email }, { require: true });
+          assert.equal(member.get('status'), 'gift');
+
+          await gift.refresh();
+          assert.equal(gift.get('status'), 'redeemed');
+          assert.equal(gift.get('redeemer_member_id'), member.id);
+        });
+
+        it('lets an existing free member redeem a gift while signed out on a paid-members-only site', async function () {
+          mockManager.mockSetting('members_signup_access', 'paid');
+
+          const email = 'gift-paid-only-existing-free@test.com';
+          const existingMember = await models.Member.add({
+            email,
+            name: 'Existing Free Member',
+            email_disabled: false,
+          });
+          await DomainEvents.allSettled();
+          assert.equal(existingMember.get('status'), 'free');
+
+          const gift = await createGift();
+
+          await sendGiftMagicLink({ email, giftToken: gift.get('token') }, 201);
+
+          const token = getMagicLinkToken(email);
+
+          await membersAgent
+            .get(`/?token=${token}&action=subscribe`)
+            .expectStatus(302)
+            .expectHeader('Set-Cookie', /members-ssr.*/);
+
+          await DomainEvents.allSettled();
+
+          const member = await models.Member.findOne({ email }, { require: true });
+          assert.equal(member.id, existingMember.id);
+          assert.equal(member.get('status'), 'gift');
+
+          await gift.refresh();
+          assert.equal(gift.get('status'), 'redeemed');
+          assert.equal(gift.get('redeemer_member_id'), member.id);
+        });
+
+        it('rejects a gift that does not exist on a paid-members-only site', async function () {
+          mockManager.mockSetting('members_signup_access', 'paid');
+
+          const email = 'gift-paid-only-missing@test.com';
+
+          const res = await sendGiftMagicLink(
+            {
+              email,
+              giftToken: 'gift-token-does-not-exist',
+            },
+            404,
+          );
+
+          assert.equal(res.body.errors[0].message, errorMessages.notFound);
+
+          mockManager.assert.sentEmailCount(0);
+          assert.equal(await models.Member.findOne({ email }, { require: false }), null);
+        });
+
+        it('rejects an already redeemed gift on a paid-members-only site', async function () {
+          mockManager.mockSetting('members_signup_access', 'paid');
+
+          const email = 'gift-paid-only-redeemed@test.com';
+          const gift = await createGift({ status: 'redeemed', redeemed_at: new Date() });
+
+          const res = await sendGiftMagicLink({ email, giftToken: gift.get('token') }, 400);
+
+          assert.equal(res.body.errors[0].message, errorMessages.alreadyRedeemed);
+
+          mockManager.assert.sentEmailCount(0);
+          assert.equal(await models.Member.findOne({ email }, { require: false }), null);
+        });
+
+        it('rejects an expired gift on a paid-members-only site', async function () {
+          mockManager.mockSetting('members_signup_access', 'paid');
+
+          const email = 'gift-paid-only-expired@test.com';
+          const gift = await createGift({
+            status: 'expired',
+            expired_at: new Date('2026-04-08T10:00:00.000Z'),
+            expires_at: new Date('2026-04-08T10:00:00.000Z'),
+          });
+
+          const res = await sendGiftMagicLink({ email, giftToken: gift.get('token') }, 400);
+
+          assert.equal(res.body.errors[0].message, errorMessages.expired);
+          assert.equal(res.body.errors[0].code, 'GIFT_EXPIRED');
+
+          mockManager.assert.sentEmailCount(0);
+          assert.equal(await models.Member.findOne({ email }, { require: false }), null);
+        });
+
+        it('rejects a refunded gift on a paid-members-only site', async function () {
+          mockManager.mockSetting('members_signup_access', 'paid');
+
+          const email = 'gift-paid-only-refunded@test.com';
+          const gift = await createGift({
+            status: 'refunded',
+            refunded_at: new Date('2026-04-08T10:00:00.000Z'),
+          });
+
+          const res = await sendGiftMagicLink({ email, giftToken: gift.get('token') }, 400);
+
+          assert.equal(res.body.errors[0].message, errorMessages.refunded);
+          assert.equal(res.body.errors[0].code, 'GIFT_REFUNDED');
+
+          mockManager.assert.sentEmailCount(0);
+          assert.equal(await models.Member.findOne({ email }, { require: false }), null);
+        });
+
+        it('creates no free member when the gift is redeemed before the link is used on a paid-members-only site', async function () {
+          mockManager.mockSetting('members_signup_access', 'paid');
+
+          const firstEmail = 'gift-paid-only-first@test.com';
+          const secondEmail = 'gift-paid-only-second@test.com';
+          const gift = await createGift();
+
+          await sendGiftMagicLink({ email: firstEmail, giftToken: gift.get('token') }, 201);
+          await sendGiftMagicLink(
+            {
+              email: secondEmail,
+              giftToken: gift.get('token'),
+            },
+            201,
+          );
+
+          const firstToken = getMagicLinkToken(firstEmail);
+          const secondToken = getMagicLinkToken(secondEmail);
+
+          await membersAgent.get(`/?token=${firstToken}&action=subscribe`).expectStatus(302);
+          const secondRes = await membersAgent
+            .get(`/?token=${secondToken}&action=subscribe`)
+            .expectStatus(302);
+
+          const secondLocation = new URL(secondRes.headers.location, urlUtils.getSiteUrl());
+          assert.equal(secondLocation.searchParams.get('success'), 'false');
+
+          // The member is created and the gift redeemed together, so the failed redemption must not leave a free member behind
+          assert.equal(
+            await models.Member.findOne({ email: secondEmail }, { require: false }),
+            null,
+          );
+        });
+
+        it('still rejects gift signups on an invite-only site', async function () {
+          mockManager.mockSetting('members_signup_access', 'invite');
+
+          const email = 'gift-invite-only-redeemer@test.com';
+          const gift = await createGift();
+
+          const res = await sendGiftMagicLink({ email, giftToken: gift.get('token') }, 400);
+
+          assert.equal(
+            res.body.errors[0].message,
+            'This site is invite-only, contact the owner for access.',
+          );
+
+          mockManager.assert.sentEmailCount(0);
+          await gift.refresh();
+          assert.equal(gift.get('status'), 'purchased');
+        });
       });
     });
   });

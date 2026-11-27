@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 
 import {
@@ -6,6 +6,7 @@ import {
   fakeMemberCustomFields,
   fakeMembers,
   member,
+  fakeAdminStats,
   renderAdminApp,
   type Member,
 } from '@test-utils/acceptance';
@@ -133,6 +134,11 @@ function fakeMemberDetailWorld(
 
 const modal = () => memberDetailScreen.fieldEditModal();
 
+beforeEach(() => {
+  fakeAdminStats.memberCount();
+  fakeAdminStats.mrr();
+});
+
 describe('Member detail custom fields', () => {
   it('renders the member’s values as a read-only record, addresses as one line', async () => {
     const m = member({ name: 'Ada Lovelace' });
@@ -167,6 +173,63 @@ describe('Member detail custom fields', () => {
     expect(saved.metafields).toEqual({ custom: { job_title: 'Publisher' } });
     expect(saved.name).toBeUndefined();
   });
+
+  it.each([false, true])(
+    'preserves custom field editing with admin7Design %s',
+    async (admin7Design) => {
+      const m = member({ name: 'Ada Lovelace' });
+      fakeMemberDetailWorld(m, { job_title: 'Editor', company: 'Ghost', home_address: ADDRESS });
+      await renderAdminApp(`/members/${m.id}`, { labs: { admin7Design } });
+
+      const action = memberDetailScreen.editFieldButton('Company');
+      await expect.element(action).toBeVisible();
+      const row = action.element().parentElement!;
+      const value = memberDetailScreen.customFieldsSection().getByText('Ghost', { exact: true });
+      const contentX = value.element().getBoundingClientRect().x;
+      await action.hover();
+
+      expect(getComputedStyle(row, '::before').left).toBe('-16px');
+      expect(getComputedStyle(row, '::before').opacity).toBe('1');
+      expect(getComputedStyle(row).borderBottomColor).toBe('rgba(0, 0, 0, 0)');
+      expect(getComputedStyle(row.previousElementSibling!).borderBottomColor).toBe(
+        'rgba(0, 0, 0, 0)',
+      );
+      expect(value.element().getBoundingClientRect().x).toBe(contentX);
+
+      await action.click({
+        position: { x: -8, y: action.element().getBoundingClientRect().height / 2 },
+      });
+      await expect.element(modal().getByLabelText('Company')).toBeVisible();
+    },
+  );
+
+  it.each([false, true])(
+    'retains selected field text with admin7Design %s',
+    async (admin7Design) => {
+      const m = member({ name: 'Ada Lovelace' });
+      fakeMemberDetailWorld(m, { job_title: 'Editor' });
+      await renderAdminApp(`/members/${m.id}`, { labs: { admin7Design } });
+
+      const value = memberDetailScreen.fieldValue('Editor');
+      await expect.element(value).toBeVisible();
+      const selection = window.getSelection()!;
+      const range = document.createRange();
+      range.selectNodeContents(value.element());
+      selection.removeAllRanges();
+      selection.addRange(range);
+      try {
+        const action = memberDetailScreen.editFieldButton('Job title').element();
+        if (!(action instanceof HTMLButtonElement)) {
+          throw new Error('The field editor must be a button');
+        }
+        action.click();
+        await expect.element(modal()).not.toBeInTheDocument();
+        expect(selection.toString()).toBe('Editor');
+      } finally {
+        selection.removeAllRanges();
+      }
+    },
+  );
 
   it('leaves an unsaved page edit intact when a custom field is saved', async () => {
     const m = member({ name: 'Ada Lovelace' });
@@ -261,6 +324,21 @@ describe('Member detail custom fields', () => {
     await expect.element(memberDetailScreen.fieldValue('+442079460000')).toBeVisible();
   });
 
+  // A letter is never valid in a phone number, so staff see the error without having to save.
+  it('shows an error while typing an invalid character in a phone number', async () => {
+    const m = member({ name: 'Ada Lovelace' });
+    fakeMemberDetailWorld(m, {}, [...FIELDS, MOBILE]);
+    await renderAdminApp(`/members/${m.id}`);
+    const mistyped = 'Enter the phone number using only digits, spaces and symbols like + - ( ).';
+
+    await memberDetailScreen.editFieldButton('Mobile').click();
+    await modal().getByLabelText('Mobile').fill('+44 20 7946 000o');
+    await expect.element(modal().getByText(mistyped)).toBeVisible();
+
+    await modal().getByLabelText('Mobile').fill('+44 (20) 7946-0000');
+    await expect.element(modal().getByText(mistyped)).not.toBeInTheDocument();
+  });
+
   // As Portal and Stripe Checkout ask for one: written as it is dialled at home, beside the
   // country it is from.
   it("puts the picked country's code in front of a number written as at home", async () => {
@@ -290,7 +368,7 @@ describe('Member detail custom fields', () => {
     await modal().getByLabelText('Mobile').fill('020 7946 000');
     await modal().getByRole('button', { name: 'Save', exact: true }).click();
     await expect
-      .element(modal().getByText('Enter a valid phone number, like +44 20 7946 0000.'))
+      .element(modal().getByText('Enter a valid phone number, like +44 7400 123456.'))
       .toBeVisible();
     expect(editApi.requests).toHaveLength(0);
 

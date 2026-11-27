@@ -36,6 +36,7 @@ inventory is a reporting tool, although contributors can run it locally.
 | [check-agent-skill-links.ts](./ci/check-agent-skill-links.ts)           | Validate repository skill discovery and Claude symlinks                 | pnpm lint:agent-skills                                    |
 | [check-app-version-bump.ts](./ci/check-app-version-bump.ts)             | Check CDN app version lines against Core defaults                       | PR CI                                                     |
 | [check-internal-packages.ts](./ci/check-internal-packages.ts)           | Validate internal package layout, exports and template conventions      | pnpm lint:packages                                        |
+| [check-legacy-services.ts](./ci/check-legacy-services.ts)               | Reject new legacy services and new dependency-check deferrals           | pnpm lint:legacy-services / PR CI                         |
 | [check-migration-integrity.ts](./ci/check-migration-integrity.ts)       | Reject invalid changes to released or incorrectly versioned migrations  | PR CI                                                     |
 | [check-versioning-ignore.ts](./ci/check-versioning-ignore.ts)           | Check workspace versioning exclusions and externally versioned packages | pnpm lint:versioning                                      |
 | [compare-image-report.ts](./ci/compare-image-report.ts)                 | Compare production image file/size reports for CI summaries             | Image-report CI step                                      |
@@ -71,16 +72,16 @@ for Nx caches.
 Publishing policy, version selection and release preparation. The publishing
 manifest is release-owned data, shared with validation through `lib/publish-manifest.ts`.
 
-| Current file                                                 | Purpose                                                                | Caller                                                                         |
-| ------------------------------------------------------------ | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| [build-publish-matrix.ts](./release/build-publish-matrix.ts) | Select affected continuous-publishing packages and CDN purge paths     | CI setup: `node tools/scripts/release/build-publish-matrix.ts <affected-json>` |
-| [compare-published.ts](./release/compare-published.ts)       | Compare locally packed output with the live registry version           | Continuous-publishing CI gate                                                  |
-| [generate-changeset.ts](./release/generate-changeset.ts)     | Create changesets for automated dependency updates                     | Renovate post-upgrade task                                                     |
-| [next-version.ts](./release/next-version.ts)                 | Compute the next continuous-publishing version from registry state     | Publishing CI; --latest prints the comparison version                          |
-| [publish-packages.ts](./release/publish-packages.ts)         | Publish eligible workspace packages in dependency order                | Tagged-release / manual publishing workflow                                    |
-| [release-apps.ts](./release/release-apps.ts)                 | Prepare intentional CDN-app minor/major releases and matching defaults | App-local pnpm ship                                                            |
-| [release-notes.ts](./release/release-notes.ts)               | Generate release notes from tagged commit ranges                       | Release CI                                                                     |
-| [release.ts](./release/release.ts)                           | Prepare Ghost and package release versions, commits and tags           | pnpm release; release workflow                                                 |
+| Current file                                                 | Purpose                                                                       | Caller                                                                                             |
+| ------------------------------------------------------------ | ----------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| [build-publish-matrix.ts](./release/build-publish-matrix.ts) | Select affected continuous-publishing packages; list the CDN aliases to purge | CI setup: `node tools/scripts/release/build-publish-matrix.ts <affected-json>`, or `--cdn-aliases` |
+| [compare-published.ts](./release/compare-published.ts)       | Compare locally packed output with the live registry version                  | Continuous-publishing CI gate                                                                      |
+| [generate-changeset.ts](./release/generate-changeset.ts)     | Create changesets for automated dependency updates                            | Renovate post-upgrade task                                                                         |
+| [next-version.ts](./release/next-version.ts)                 | Compute the next continuous-publishing version from registry state            | Publishing CI; --latest prints the comparison version                                              |
+| [publish-packages.ts](./release/publish-packages.ts)         | Publish eligible workspace packages in dependency order                       | Tagged-release / manual publishing workflow                                                        |
+| [release-apps.ts](./release/release-apps.ts)                 | Prepare intentional CDN-app minor/major releases and matching defaults        | App-local pnpm ship                                                                                |
+| [release-notes.ts](./release/release-notes.ts)               | Generate release notes from tagged commit ranges                              | Release CI                                                                                         |
+| [release.ts](./release/release.ts)                           | Prepare Ghost and package release versions, commits and tags                  | pnpm release; release workflow                                                                     |
 
 ### Root setup and maintenance
 
@@ -162,9 +163,31 @@ the allowlist remain in `.dependency-cruiser.cjs`. The shared runner in
 `lib/dependency-boundaries.ts` reads `.dependency-cruiser-known-violations.json`
 and scans Core and apps once for both reports and `ci/check-boundaries.ts`.
 The checker rejects new violations and stale entries; reports retain all findings.
+The runner reads from the scan's report which TypeScript compiler Dependency
+Cruiser loaded and fails if it had none: without it the scan skips TypeScript
+files or reads type-only imports as ordinary ones, and reports different
+violations without an error.
+With pnpm's shared store, Dependency Cruiser finds the `typescript` package only
+through the environment pnpm sets for what it runs, so run the scan through pnpm,
+as `pnpm lint:boundaries`, the commit hook and CI do.
+It also rejects a tracked JavaScript file beside a TypeScript file of the same
+name in Core: the scan skips that file as build output, but Node would load it.
 The resolver adapter in `ci/` keeps authored source resolution consistent. The
 [services guide](../../ghost/core/server/services/README.md#dependency-boundaries)
 defines the policy.
+
+[`legacy-services.ts`](../configs/oxlint/legacy-services.ts) in the Oxlint
+configuration reads the legacy service inventory. Boundary lint, the
+`ghost/service-root-shape` and `ghost/boot-awaits-service-init` Oxlint rules, the
+service generator and the reports all use it, so there is one definition of a
+legacy service.
+
+`ci/check-legacy-services.ts` (`pnpm lint:legacy-services`) fails when the
+checkout lists a legacy service, or defers dependency checks for one, that the
+commit it forked from `origin/main` does not. CI runs it on pull requests that
+change the inventory. It fails rather than skips when the base branch has not
+been fetched, so `pnpm lint` does not include it. Its comparison with the fork
+point is private to the check, in `ci/legacy-services-base.ts`.
 
 ## TypeScript inventory
 

@@ -18,16 +18,24 @@ export const appManifestChange = 'app-manifest-change';
 export const appDevelopmentBadge = 'app-development-badge';
 export const accessIndicator = 'access-indicator';
 export const accessItem = 'access-item';
+export const appNoAccess = 'app-no-access';
+export const accessNew = 'access-new';
+export const appAccessRemoved = 'app-access-removed';
 export const appDetails = 'app-details';
 export const appUnverifiedDeveloperBadge = 'app-unverified-developer-badge';
 export const appPage = 'app-page';
 export const appFrame = 'app-frame';
+export const appFooter = 'app-footer';
+export const appContent = 'app-content';
+export const appOverlayFrame = 'app-overlay-frame';
+export const appOverlayTint = 'app-overlay-tint';
 export const appNotResponding = 'app-not-responding';
 export const appUnavailable = 'app-unavailable';
 export const appNotInstalled = 'app-not-installed';
 export const appNotFramed = 'app-not-framed';
 export const appNeedsApproval = 'app-needs-approval';
 export const appHistoryEntry = 'app-history-entry';
+export const appHistoryEntryTitle = 'app-history-entry-title';
 export const appUninstallDialog = 'app-uninstall-dialog';
 export const appUninstallIntegrationKeyNote = 'app-uninstall-integration-key-note';
 export const navApps = 'nav-apps';
@@ -45,6 +53,9 @@ export const uninstallButton = 'Uninstall';
 export const reviewChangesLink = 'Review changes';
 export const openLink = 'Open';
 export const detailsMenuItem = 'Details';
+// The menu on an app's details, which holds pinning and Uninstall.
+export const detailsActionsButton = 'App actions';
+export const appDataAccessedBy = 'app-data-accessed-by';
 // Admin's shared not-found page, which Apps routes show while the Labs flag is off.
 export const notFoundHeading = 'Page not found';
 

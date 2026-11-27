@@ -49,6 +49,7 @@ describe('Recipient accounting through MySQL and Bookshelf', function () {
   let email: Email;
   let fixtureEmailIds: string[];
   let addedMemberIds: string[];
+  let addedPostIds: string[];
   let memberRestorations: { id: string; attributes: Record<string, unknown> }[];
   let service: {
     createBatch: (...args: CreateBatchArgs) => Promise<Batch>;
@@ -93,12 +94,13 @@ describe('Recipient accounting through MySQL and Bookshelf', function () {
   beforeEach(async function () {
     fixtureEmailIds = [];
     addedMemberIds = [];
+    addedPostIds = [];
     memberRestorations = [];
     sinon.stub(logging, 'info');
     sinon.stub(logging, 'error');
     sinon.stub(logging, 'warn');
     email = await models.Email.add({
-      post_id: ObjectID().toHexString(),
+      post_id: await createPublishedPostId(),
       submitted_at: new Date(),
       email_count: 10,
       preflight_email_count: 10,
@@ -137,7 +139,20 @@ describe('Recipient accounting through MySQL and Bookshelf', function () {
     await db.knex('email_batches').whereIn('email_id', emailIds).del();
     await db.knex('emails').whereIn('id', emailIds).del();
     await db.knex('members').whereIn('id', addedMemberIds).del();
+    for (const id of addedPostIds) {
+      await models.Post.destroy({ id }, { context: { internal: true } });
+    }
   });
+
+  // emailJob marks an email whose post is not published as failed instead of sending it.
+  async function createPublishedPostId(): Promise<string> {
+    const post = await models.Post.add(
+      { title: 'Recipient accounting', status: 'published' },
+      { context: { internal: true } },
+    );
+    addedPostIds.push(post.id);
+    return post.id;
+  }
 
   function createService(): typeof service {
     return new BatchSendingService({
@@ -218,7 +233,7 @@ describe('Recipient accounting through MySQL and Bookshelf', function () {
 
   async function createOtherEmail() {
     const otherEmail = await models.Email.add({
-      post_id: ObjectID().toHexString(),
+      post_id: await createPublishedPostId(),
       submitted_at: new Date(),
       email_count: 1,
     });
@@ -238,7 +253,7 @@ describe('Recipient accounting through MySQL and Bookshelf', function () {
       sinon.stub(models.Email, 'findOne').callsFake(async (...args) => {
         const found = await findOne(...args);
         if (found) {
-          sinon.stub(found, 'getLazyRelation').resolves({});
+          sinon.stub(found, 'getLazyRelation').resolves({ get: () => 'published' });
         }
         return found;
       });
@@ -434,13 +449,11 @@ describe('Recipient accounting through MySQL and Bookshelf', function () {
     await service.onShutdown();
     await email.refresh();
     const partialIds = (await service.getBatches(email)).map((batch) => batch.id);
-    assert.equal(email.get('status'), 'submitting');
+    assert.equal(email.get('status'), 'pending');
     assert.equal(email.get('prepared_at'), null);
     assert.equal(partialIds.length, 1);
     sinon.assert.notCalled(sender.send);
 
-    // The boot scanner releases the interrupted email's lock before dispatching it.
-    await email.save({ status: 'pending' }, { patch: true });
     const restarted = createService();
     await restarted.emailJob({ emailId: email.id });
     await email.refresh();
@@ -477,7 +490,7 @@ describe('Recipient accounting through MySQL and Bookshelf', function () {
     await service.emailJob({ emailId: email.id });
     await service.onShutdown();
     await email.refresh();
-    assert.equal(email.get('status'), 'submitting');
+    assert.equal(email.get('status'), 'pending');
     const stopped = await service.getBatches(email);
     assert.ok(stopped.some((batch) => batch.get('status') === 'submitted'));
     assert.ok(stopped.some((batch) => batch.get('status') === 'pending'));
@@ -487,7 +500,6 @@ describe('Recipient accounting through MySQL and Bookshelf', function () {
     segmenter.getMemberFilterForSegment.throws(
       new Error('Frozen recipients must not be swept again'),
     );
-    await email.save({ status: 'pending' }, { patch: true });
     await createService().emailJob({ emailId: email.id });
     await email.refresh();
     assert.equal(email.get('status'), 'submitted');
@@ -610,7 +622,7 @@ describe('Recipient accounting through MySQL and Bookshelf', function () {
     assert.equal(details.batch_error.reason, 'provider_payload_count');
   });
 
-  it('reports persisted verification failures during shutdown with unstarted batches', async function () {
+  it('fails the email on persisted verification failures during shutdown with unstarted batches', async function () {
     const batches = await service.createBatches(data);
     sender.send.onFirstCall().callsFake(async () => {
       service.onPreStop();
@@ -626,8 +638,8 @@ describe('Recipient accounting through MySQL and Bookshelf', function () {
     assert.equal(reported.length, 1);
     assert.equal(JSON.parse(reported[0].args[0].errorDetails).reason, 'batch_verification_failed');
     await email.refresh();
-    assert.equal(email.get('status'), 'submitting');
-    assert.equal(email.get('error'), null);
+    assert.equal(email.get('status'), 'failed');
+    assert.equal(email.get('error'), reported[0].args[0].message);
     assert.ok((await service.getBatches(email)).some((batch) => batch.get('status') === 'pending'));
   });
 
@@ -782,10 +794,13 @@ describe('Recipient accounting through MySQL and Bookshelf', function () {
   });
 
   it('creates no batch for an all-excluded preparation page', async function () {
-    const original = models.Member.getFilteredCollectionQuery.bind(models.Member);
-    sinon
-      .stub(models.Member, 'getFilteredCollectionQuery')
-      .callsFake((...args) => original(...args).where('id', '000000000000000000000004'));
+    const resolveFilter = models.Member.resolveFilter.bind(models.Member);
+    sinon.stub(models.Member, 'resolveFilter').callsFake(async (options) => {
+      const filter = await resolveFilter(options);
+      const query = filter.query.bind(filter);
+      filter.query = () => query().where('id', '000000000000000000000004');
+      return filter;
+    });
     const memberId = '000000000000000000000004';
     await corruptMember(memberId, { uuid: '' });
     assert.deepEqual(await service.createBatches(data), []);
@@ -1044,9 +1059,7 @@ describe('Recipient accounting through MySQL and Bookshelf', function () {
         batches.reduce((sum, batch) => sum + batch.get('recipient_count'), 0),
         3,
       );
-      const audience = sinon
-        .stub(models.Member, 'getFilteredCollectionQuery')
-        .throws(new Error('Frozen'));
+      const audience = sinon.stub(models.Member, 'resolveFilter').rejects(new Error('Frozen'));
       assert.deepEqual(
         (await service.createBatches(data)).map((batch) => batch.id),
         batches.map((batch) => batch.id),
@@ -1064,8 +1077,8 @@ describe('Recipient accounting through MySQL and Bookshelf', function () {
         .where({ email_id: email.id })
         .orderBy('id');
       const audience = sinon
-        .stub(models.Member, 'getFilteredCollectionQuery')
-        .throws(new Error('Already started'));
+        .stub(models.Member, 'resolveFilter')
+        .rejects(new Error('Already started'));
       const batches = await service.createBatches(data);
       assert.equal(batches.length, 2);
       assert.deepEqual(
@@ -1373,7 +1386,8 @@ describe('Recipient accounting through MySQL and Bookshelf', function () {
       assert.equal(email.get('status'), 'submitted');
       assert.equal(email.get('email_count'), 4 - excludedCount);
 
-      await email.save({ status: 'failed' }, { patch: true });
+      // A retry returns the email to pending before dispatching its send job.
+      await email.save({ status: 'pending' }, { patch: true });
       sinon.stub(models.Member, 'findPage').throws(new Error('Audience must stay frozen'));
       sender.send.resetHistory();
       await service.emailJob({ emailId: email.id });
@@ -1493,13 +1507,8 @@ describe('Recipient accounting through MySQL and Bookshelf', function () {
       assert.equal(error.retryable, false);
       assert.equal(verificationDetails(error).reason, 'provider_payload_count');
       await email.refresh();
-      assert.equal(email.get('status'), shutdown ? 'submitting' : 'failed');
-      assert.equal(email.get('error'), shutdown ? null : error.message);
-      if (shutdown) {
-        assert.ok(
-          (await service.getBatches(email)).some((batch) => batch.get('status') === 'pending'),
-        );
-      }
+      assert.equal(email.get('status'), 'failed');
+      assert.equal(email.get('error'), error.message);
       const alerts = logging.error
         .getCalls()
         .filter(
@@ -1737,8 +1746,8 @@ describe('Recipient accounting through MySQL and Bookshelf', function () {
       .where({ email_id: email.id })
       .orderBy('id');
     const audience = sinon
-      .stub(models.Member, 'getFilteredCollectionQuery')
-      .throws(new Error('Audience must stay frozen'));
+      .stub(models.Member, 'resolveFilter')
+      .rejects(new Error('Audience must stay frozen'));
     const retried = await service.createBatches(data);
     assert.deepEqual(retried.map((b) => b.id).sort(), prepared.map((b) => b.id).sort());
     assert.deepEqual(

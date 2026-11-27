@@ -1,5 +1,16 @@
 const errors = require('@tryghost/errors');
 const logging = require('@tryghost/logging');
+const { appInstallationIdFrom } = require('../../../lib/actor');
+
+// An app acting for a user is recorded beside that user, the actor. Set last, so a model's own
+// context can't stand in for it.
+const setAppInstallation = (context, options) => {
+  delete context.app_installation_id;
+  const installationId = appInstallationIdFrom(options.context);
+  if (installationId) {
+    context.app_installation_id = installationId;
+  }
+};
 
 /**
  * This plugin is used to add actions to the database. It backs the "audit log" feature we have in Ghost.
@@ -119,6 +130,7 @@ module.exports = function (Bookshelf) {
         } else if (['added', 'edited'].includes(event)) {
           context.primary_name = currentPrimaryName || previousPrimaryName;
         }
+        setAppInstallation(context, options);
 
         const data = {
           event,
@@ -203,6 +215,7 @@ module.exports = function (Bookshelf) {
             ...this.getBulkActionExtraContext.bind(this)(options),
           };
         }
+        setAppInstallation(context, options);
 
         const data = {
           event,

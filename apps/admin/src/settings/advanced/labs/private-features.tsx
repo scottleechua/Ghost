@@ -1,7 +1,7 @@
 import FeatureToggle from './feature-toggle';
 import LabItem from './lab-item';
 import React, { useEffect, useState } from 'react';
-import { ActionList } from '@tryghost/shade/components';
+import { List } from '@tryghost/shade/components';
 import { HostLimitError } from '@tryghost/admin-x-framework/errors';
 import { useLimiter } from '@tryghost/admin-x-framework/hooks';
 
@@ -13,12 +13,6 @@ type Feature = {
 };
 
 const features: Feature[] = [
-  {
-    title: 'Phone custom fields',
-    description:
-      'Offers Phone as a type of custom field while it is being built. A field made while this is on keeps working if it is turned off.',
-    flag: 'customFieldTypePhone',
-  },
   {
     title: 'Automations',
     description:
@@ -51,6 +45,11 @@ const features: Feature[] = [
     flag: 'admin7Design',
   },
   {
+    title: 'Admin 7 · Mobile hardening',
+    description: 'Preview responsive Admin improvements, independently of Admin 7 · Design.',
+    flag: 'admin7Mobile',
+  },
+  {
     title: 'Admin 7 · Customize from View site',
     description:
       'Customize the site design from View site, with a live preview. Needs Admin 7 · Design.',
@@ -80,12 +79,6 @@ const features: Feature[] = [
     flag: 'getHelperDeduplication',
   },
   {
-    title: 'Stripe checkout collection',
-    description:
-      'Let admins turn on shipping address and phone number collection for a tier, asked by Stripe checkout and stored against the member',
-    flag: 'stripeCheckoutCollection',
-  },
-  {
     title: 'Paywall improvements',
     description: 'Enables paywall usability, discoverability and email customization improvements',
     flag: 'paywallImprovements',
@@ -103,10 +96,45 @@ const features: Feature[] = [
     flag: 'apps',
   },
   {
-    title: 'In-app support',
+    title: 'Editor presence polling',
     description:
-      'Open Help in a sidebar inside Admin instead of a new tab. Needs a host script that provides the support app.',
-    flag: 'inAppSupport',
+      'Record which staff have a post open in the editor and poll for it. Shows nothing yet.',
+    flag: 'editorPresencePolling',
+  },
+  {
+    title: 'Editor presence indicators',
+    description:
+      'Show who else has a post or page open, in the editor header and on list rows. Needs editor presence polling.',
+    flag: 'editorPresence',
+  },
+  {
+    title: 'Editor lease',
+    description:
+      'Let one editor tab at a time edit a post or page. Others open it read-only and can take over. Needs editor presence polling.',
+    flag: 'editorLease',
+  },
+  {
+    title: 'Comments analytics',
+    description: 'Show comment volume, top posts and top commenters beside the comments list.',
+    flag: 'commentsAnalytics',
+  },
+  {
+    title: 'OAuth bridge',
+    description:
+      'Connect Stripe through account.ghost.org, which sends the connection back to Admin, instead of pasting a secure key.',
+    flag: 'oauthBridge',
+  },
+  {
+    title: 'Member segments',
+    description:
+      "Work in progress. Members filters that name a segment, Admin's segment screens and emailing posts to segments. So far, members filters in the Admin API can name segments.",
+    flag: 'memberSegments',
+  },
+  {
+    title: 'Grouped settings navigation',
+    description:
+      'Collapse the Settings navigation to its groups and show one group of settings at a time.',
+    flag: 'settingsGroupedNav',
   },
 ];
 
@@ -138,7 +166,7 @@ const AlphaFeatures: React.FC = () => {
   }, [limiter]);
 
   return (
-    <ActionList>
+    <List>
       {allowedFeatures.map((feature) => (
         <LabItem
           key={feature.flag}
@@ -147,7 +175,7 @@ const AlphaFeatures: React.FC = () => {
           title={feature.title}
         />
       ))}
-    </ActionList>
+    </List>
   );
 };
 

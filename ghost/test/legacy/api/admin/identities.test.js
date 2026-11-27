@@ -5,6 +5,7 @@ const { createRemoteJWKSet, jwtVerify } = require('jose');
 const testUtils = require('../../../utils');
 const localUtils = require('./utils');
 const config = require('../../../../core/shared/config');
+const urlUtils = require('../../../../core/shared/url-utils').default;
 
 let request;
 
@@ -46,8 +47,37 @@ describe('Identities API', function () {
         .then((decoded) => {
           assert.equal(decoded.sub, 'jbloggs@example.com');
           assert.equal(decoded.role, 'Owner');
+          assert.equal(Object.hasOwn(decoded, 'aud'), false);
         });
     });
+
+    it('Signs the requested audience as aud', async function () {
+      const res = await request
+        .get(localUtils.API.getApiQuery(`identities/?audience=support`))
+        .set('Origin', config.get('url'))
+        .expect(200);
+
+      const decoded = await verifyJWKS(
+        `${request.app}/ghost/.well-known/jwks.json`,
+        res.body.identities[0].token,
+      );
+      assert.equal(decoded.aud, 'support');
+      assert.equal(decoded.sub, 'jbloggs@example.com');
+    });
+
+    for (const query of [
+      'audience=support,billing',
+      'audience=support&audience=billing',
+      'audience=',
+      'audience=Support',
+    ]) {
+      it(`Rejects ${query}`, async function () {
+        await request
+          .get(localUtils.API.getApiQuery(`identities/?${query}`))
+          .set('Origin', config.get('url'))
+          .expect(422);
+      });
+    }
   });
 
   describe('As Administrator', function () {
@@ -97,33 +127,37 @@ describe('Identities API', function () {
     });
   });
 
-  describe('As Editor', function () {
-    beforeAll(function () {
-      return localUtils
-        .startGhost()
-        .then(function () {
-          request = supertest.agent(config.get('url'));
-        })
-        .then(function () {
-          return testUtils.createUser({
-            user: testUtils.DataGenerator.forKnex.createUser({ email: 'editor+1@ghost.org' }),
-            role: testUtils.DataGenerator.Content.roles[1].name,
-          });
-        })
-        .then(function (admin) {
-          request.user = admin;
+  for (const roleName of ['Editor', 'Author', 'Contributor', 'Super Editor']) {
+    describe(`As ${roleName}`, function () {
+      const email = `${roleName.toLowerCase().replace(' ', '-')}+1@ghost.org`;
 
-          return localUtils.doAuth(request);
+      beforeAll(async function () {
+        await localUtils.startGhost();
+        request = supertest.agent(config.get('url'));
+        request.user = await testUtils.createUser({
+          user: testUtils.DataGenerator.forKnex.createUser({ email }),
+          role: roleName,
         });
-    });
+        await localUtils.doAuth(request);
+      });
 
-    it('Cannot read', function () {
-      return request
-        .get(localUtils.API.getApiQuery(`identities/`))
-        .set('Origin', config.get('url'))
-        .expect('Content-Type', /json/)
-        .expect('Cache-Control', testUtils.cacheRules.private)
-        .expect(403);
+      it('Can create JWT token carrying its own role', async function () {
+        const res = await request
+          .get(localUtils.API.getApiQuery(`identities/`))
+          .set('Origin', config.get('url'))
+          .expect('Content-Type', /json/)
+          .expect('Cache-Control', testUtils.cacheRules.private)
+          .expect(200);
+
+        const decoded = await verifyJWKS(
+          `${request.app}/ghost/.well-known/jwks.json`,
+          res.body.identities[0].token,
+        );
+        assert.equal(decoded.sub, email);
+        assert.equal(decoded.role, roleName);
+        assert.equal(decoded.iss, urlUtils.urlFor('admin', true));
+        assert.equal(decoded.exp - decoded.iat, 5 * 60);
+      });
     });
-  });
+  }
 });

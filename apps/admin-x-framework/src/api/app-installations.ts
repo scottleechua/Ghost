@@ -1,4 +1,5 @@
-import type { AppManifest } from '@tryghost/app-contracts';
+import type { AppManifest, ManifestChange } from '@tryghost/app-contracts';
+import { z } from 'zod';
 import { createMutation, createQuery, createQueryWithId } from '../utils/api/hooks';
 
 export type { AppManifest } from '@tryghost/app-contracts';
@@ -36,13 +37,11 @@ export interface AppInstallationHistoryEntry {
   created_at: string;
   /** The host the app moved to. Only set when an approval moved the app. */
   moved_to?: string;
-}
-
-/** One field that differs from what was approved before. */
-export interface AppManifestChange {
-  /** A path in the manifest, such as `surfaces[0].url`, or `manifest_url` when the app moved. */
-  path: string;
-  requires_approval: boolean;
+  /**
+   * What the entry changed, as Ghost stored it with the manifest: fields, then scopes. A
+   * suspension lists what waits for approval. Left out when nothing changed.
+   */
+  changes?: ManifestChange[];
 }
 
 /** What a publisher reviews before installing an app, or before approving changes to one. */
@@ -69,7 +68,11 @@ export interface AppInstallationPreview {
     manifest_url: string;
     manifest: AppManifest;
     icon_data_url: string | null;
-    changes: AppManifestChange[];
+    /**
+     * Field changes by path, such as `surfaces[0].url`, or `manifest_url` when the app moved,
+     * then scope changes in the registry's order.
+     */
+    changes: ManifestChange[];
   } | null;
 }
 
@@ -78,17 +81,67 @@ export interface AppInstallationsResponseType {
 }
 
 /**
- * One session of an installed app: the installation as Ghost returned it after re-checking the
- * app's manifest. The session is pinned to that installation's revision, and ends once the
- * revision changes.
+ * The token Admin sends the app's Admin API calls with, as `Authorization: Bearer`. It acts for
+ * the staff user within the installation's approved scopes. Only Admin holds it; the app's frame
+ * never sees it.
  */
-export interface AppSession {
-  installation: AppInstallation;
+export const AppSessionTokenSchema = z.object({
+  access_token: z.string().min(1),
+  /** How long it lasts, in seconds from when Ghost answered */
+  expires_in: z.number().positive(),
+});
+
+export type AppSessionToken = z.infer<typeof AppSessionTokenSchema>;
+
+// Only the status is checked: it decides whether a session comes with a token. The rest of the
+// installation is read as the other installation hooks read it.
+const installationWithStatus = <Status extends AppInstallationStatus>(
+  statuses: readonly Status[],
+) =>
+  z.custom<AppInstallation & { status: Status }>(
+    (value) =>
+      typeof value === 'object' &&
+      value !== null &&
+      (statuses as readonly unknown[]).includes((value as { status?: unknown }).status),
+  );
+
+/** A session of an active installation, which always comes with a token. */
+const ActiveAppSessionSchema = z.object({
+  installation: installationWithStatus(['active']),
+  token: AppSessionTokenSchema,
+});
+
+/** A session of an installation that isn't active: it gets no token, and the app doesn't load. */
+const InactiveAppSessionSchema = z.object({
+  installation: installationWithStatus(['suspended', 'uninstalled']),
+  token: z.null(),
+});
+
+export type ActiveAppSession = z.infer<typeof ActiveAppSessionSchema>;
+export type InactiveAppSession = z.infer<typeof InactiveAppSessionSchema>;
+
+/**
+ * One session of an installed app: the installation as Ghost returned it after re-checking the
+ * app's manifest, and for an active one the token its calls are sent with. The session is pinned
+ * to that installation's revision, and ends once the revision changes.
+ */
+export type AppSession = ActiveAppSession | InactiveAppSession;
+
+export function isActiveAppSession(session: AppSession | undefined): session is ActiveAppSession {
+  return session?.installation.status === 'active';
 }
 
-export interface AppSessionsResponseType {
-  app_sessions: AppSession[];
-}
+const AppSessionsResponseSchema = z.object({
+  app_sessions: z.array(z.union([ActiveAppSessionSchema, InactiveAppSessionSchema])),
+});
+
+export type AppSessionsResponseType = z.infer<typeof AppSessionsResponseSchema>;
+
+const AppTokensResponseSchema = z.object({
+  app_tokens: z.array(AppSessionTokenSchema),
+});
+
+export type AppTokensResponseType = z.infer<typeof AppTokensResponseSchema>;
 
 export interface AppInstallationPreviewsResponseType {
   app_installation_previews: AppInstallationPreview[];
@@ -130,7 +183,28 @@ export const useReadAppInstallation = createQueryWithId<AppInstallationsResponse
 export const useStartAppSession = createMutation<AppSessionsResponseType, string>({
   method: 'POST',
   path: (id) => `/apps/installations/${id}/sessions/`,
+  parseResponse: (data) => AppSessionsResponseSchema.parse(data),
   invalidateQueries: { dataType },
+});
+
+/**
+ * Creates a new token for a session that started at `revision`, which renews it without
+ * re-checking the manifest. The token has the same shape as a started session's. Ghost answers
+ * 409 with `APP_SESSION_ENDED` when the installation was suspended or changed since the session
+ * started, and 404 with `APP_NOT_INSTALLED` once it's uninstalled; either ends the session.
+ */
+export const useCreateAppToken = createMutation<
+  AppTokensResponseType,
+  { id: string; revision: number }
+>({
+  method: 'POST',
+  path: ({ id }) => `/apps/installations/${id}/tokens/`,
+  body: ({ revision }) => ({ app_tokens: [{ revision }] }),
+  parseResponse: (data) => AppTokensResponseSchema.parse(data),
+  // Every app call refused for its token waits on the renewal, so a stalled one mustn't hold
+  // them. The token holder backs off and retries itself.
+  timeout: 10_000,
+  retry: false,
 });
 
 export const useAddAppInstallation = createMutation<

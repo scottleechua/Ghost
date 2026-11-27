@@ -1,5 +1,6 @@
 const DomainEvents = require('@tryghost/domain-events');
 const nock = require('nock');
+const stripe = require('stripe');
 const { z } = require('zod');
 let members = {};
 let stripeService = {};
@@ -93,6 +94,34 @@ function customerSessionRefusal(body, customer) {
  * If you create a new subscription, it will by default send the checkout.session.completed webhook.
  * If you update a subscription, it will by default send the customer.subscription.updated webhook.
  */
+/**
+ * The parts of a Stripe API path: its collection, such as `customers` or `checkout/sessions`, the
+ * object it names, if any, and an action on that object, such as `attach` or `expire`.
+ *
+ * @param {string} uri
+ * @returns {{resource?: string, id?: string, action?: string}}
+ */
+function partsOf(uri) {
+  const [, resource, id, action] =
+    uri.match(/^\/?v1\/(checkout\/sessions|\w+)(?:\/(\w+))?(?:\/(\w+))?/) || [];
+  return { resource, id, action };
+}
+
+/** Stripe's answer for an object it doesn't hold. */
+function resourceMissing(param, id) {
+  return [
+    404,
+    {
+      error: {
+        type: 'invalid_request_error',
+        code: 'resource_missing',
+        param,
+        message: `No such ${param}: '${id}'`,
+      },
+    },
+  ];
+}
+
 class StripeMocker {
   customers = [];
   subscriptions = [];
@@ -102,6 +131,7 @@ class StripeMocker {
   prices = [];
   products = [];
   checkoutSessions = [];
+  webhookEndpoints = [];
 
   /**
    * The branding set in the Stripe dashboard. A new checkout session reports it, under any
@@ -121,6 +151,40 @@ class StripeMocker {
   checkoutParamRefusal = null;
   /** Makes Stripe fail every new checkout session with this error, in Stripe's API shape. */
   checkoutSessionError = null;
+
+  /**
+   * Requests Stripe fails, as it does when a key is revoked, an object is locked or Stripe can't be
+   * reached. Each failure answers every request, or only those for one `resource` (such as
+   * `customers` or `checkout/sessions`) and optionally one object `id`, with `reply`: a status and a
+   * body in Stripe's API shape, or an error that fails the request before Stripe responds. An `id`
+   * of null matches requests that name no object, such as a create. A failure can be kept to one
+   * HTTP `method`, and to its first `times` requests.
+   *
+   * @type {{resource?: string, id?: string | null, method?: string, times?: number, reply: [number, object] | Error}[]}
+   */
+  failures = [];
+
+  /**
+   * Every request Stripe received, in order.
+   *
+   * @type {{method: string, resource?: string, id?: string, action?: string}[]}
+   */
+  requests = [];
+
+  /**
+   * Awaited before Stripe answers a request, so a test can hold a request back or line several up.
+   *
+   * @type {((request: {method: string, resource?: string, id?: string, action?: string}) => Promise<void>) | null}
+   */
+  beforeReply = null;
+
+  /**
+   * Awaited after Stripe has handled a request and before its answer is sent, so a test can make an
+   * answer arrive late.
+   *
+   * @type {((request: {method: string, resource?: string, id?: string, action?: string}) => Promise<void>) | null}
+   */
+  beforeDelivery = null;
 
   nockInterceptors = [];
 
@@ -155,6 +219,11 @@ class StripeMocker {
     this.prices = [];
     this.products = [];
     this.checkoutSessions = [];
+    this.webhookEndpoints = [];
+    this.failures = [];
+    this.requests = [];
+    this.beforeReply = null;
+    this.beforeDelivery = null;
     this.checkoutBranding = StripeMocker.defaultCheckoutBranding();
     this.failCheckoutExpiry = false;
     this.refuseCheckoutDesign = false;
@@ -307,6 +376,7 @@ class StripeMocker {
         type: 'list',
         data: [
           {
+            id: `si_${this.#generateRandomId()}`,
             price,
           },
         ],
@@ -323,8 +393,12 @@ class StripeMocker {
         type: 'checkout.session.completed',
         data: {
           object: {
+            id: `cs_${this.#generateRandomId()}`,
+            object: 'checkout.session',
+            created: Math.floor(Date.now() / 1000),
             mode: 'subscription',
             customer: customer.id,
+            subscription: subscriptionId,
             metadata: {
               checkoutType: 'signup',
             },
@@ -431,6 +505,7 @@ class StripeMocker {
           decoded.items = {
             data: [
               {
+                id: `si_${this.#generateRandomId()}`,
                 ...first,
                 price,
               },
@@ -455,6 +530,12 @@ class StripeMocker {
           },
           ...decoded,
         };
+      }
+
+      // As Stripe does, an update that sets a subscription to end with its current period sets
+      // `canceled_at` to the time of that update, and one that sets it to continue clears it.
+      if (id && typeof decoded.cancel_at_period_end === 'boolean' && !('canceled_at' in decoded)) {
+        decoded.canceled_at = decoded.cancel_at_period_end ? Math.floor(Date.now() / 1000) : null;
       }
 
       if (typeof decoded.customer === 'string') {
@@ -494,6 +575,45 @@ class StripeMocker {
   }
 
   /**
+   * Answers a request with the failure that matches it, if any, and otherwise with `answer`.
+   *
+   * @param {string} uri
+   * @param {(err: Error | null, result?: any) => void} callback
+   * @param {(parts: {resource?: string, id?: string, action?: string}) => any} answer
+   */
+  #reply(method, uri, callback, answer) {
+    const parts = partsOf(uri);
+    const request = { method, ...parts };
+    this.requests.push(request);
+
+    const respond = () => {
+      const failure = this.failures.find(
+        (f) =>
+          (!f.resource || f.resource === parts.resource) &&
+          (f.id === null ? !parts.id : !f.id || f.id === parts.id) &&
+          (!f.method || f.method === method) &&
+          f.times !== 0,
+      );
+      if (failure?.times) {
+        failure.times -= 1;
+      }
+      const failed = failure?.reply instanceof Error;
+      const reply = failure ? failure.reply : answer(parts);
+      const deliver = () => (failed ? callback(reply) : callback(null, reply));
+
+      if (!this.beforeDelivery) {
+        return deliver();
+      }
+      this.beforeDelivery(request).then(deliver, callback);
+    };
+
+    if (!this.beforeReply) {
+      return respond();
+    }
+    this.beforeReply(request).then(respond, callback);
+  }
+
+  /**
    * Removes all the registered nock interceptors.
    */
   remove() {
@@ -514,147 +634,214 @@ class StripeMocker {
       .persist()
       .get(/v1\/.*/);
     this.nockInterceptors.push(interceptor);
-    interceptor.reply((uri) => {
-      const [match, resource, id] = uri.match(/\/?v1\/(\w+)\/?(\w+)/) || [null];
-
-      if (!match) {
-        return [500];
-      }
-
-      if (resource === 'setup_intents') {
-        return this.#getData(this.setupIntents, id);
-      }
-
-      if (resource === 'customers') {
-        return this.#getData(this.customers, id);
-      }
-
-      if (resource === 'subscriptions') {
-        return this.#getData(this.subscriptions, id);
-      }
-
-      if (resource === 'coupons') {
-        return this.#getData(this.coupons, id);
-      }
-
-      if (resource === 'payment_methods') {
-        return this.#getData(this.paymentMethods, id);
-      }
-
-      if (resource === 'prices') {
-        return this.#getData(this.prices, id);
-      }
-
-      if (resource === 'products') {
-        return this.#getData(this.products, id);
-      }
-
-      return [500];
-    });
+    interceptor.reply((uri, _body, callback) =>
+      this.#reply('GET', uri, callback, (parts) => this.#get(parts)),
+    );
 
     interceptor = nock('https://api.stripe.com')
       .persist()
       .post(/v1\/.*/);
+
     this.nockInterceptors.push(interceptor);
-    interceptor.reply((uri, body) => {
-      const [match, resource, id] = uri.match(/\/?v1\/(\w+)(?:\/?(\w+)){0,2}/) || [null];
 
-      if (!match) {
-        return [500];
-      }
-
-      if (resource === 'payment_methods') {
-        return this.#postData(this.paymentMethods, id, body, resource);
-      }
-
-      if (resource === 'subscriptions') {
-        return this.#postData(this.subscriptions, id, body, resource);
-      }
-
-      if (resource === 'customers') {
-        return this.#postData(this.customers, id, body, resource);
-      }
-
-      if (resource === 'coupons') {
-        return this.#postData(this.coupons, id, body, resource);
-      }
-
-      if (resource === 'prices') {
-        return this.#postData(this.prices, id, body, resource);
-      }
-
-      if (resource === 'products') {
-        return this.#postData(this.products, id, body, resource);
-      }
-
-      if (resource === 'checkout' && id === 'sessions') {
-        if (this.checkoutSessionError) {
-          return [400, { error: this.checkoutSessionError }];
-        }
-        const session = require('qs').parse(body);
-        const refusal = customerSessionRefusal(
-          session,
-          this.customers.find((customer) => customer.id === session.customer),
-        );
-        if (refusal) {
-          return [400, { error: { type: 'invalid_request_error', message: refusal } }];
-        }
-        if (this.checkoutParamRefusal && this.checkoutParamRefusal.param in session) {
-          return [400, { error: this.checkoutParamRefusal.error }];
-        }
-        if (this.refuseCheckoutDesign && session.branding_settings) {
-          return [
-            400,
-            {
-              error: {
-                type: 'invalid_request_error',
-                param: 'branding_settings[font_family]',
-                message: 'Invalid branding_settings[font_family]',
-              },
-            },
-          ];
-        }
-        return this.#postData(this.checkoutSessions, null, body, resource);
-      }
-
-      if (resource === 'checkout' && uri.endsWith('/expire')) {
-        if (this.failCheckoutExpiry) {
-          return [500, { error: { type: 'api_error', message: 'Stripe is down' } }];
-        }
-        return this.#postData(this.checkoutSessions, id, 'status=expired', resource);
-      }
-
-      return [500];
-    });
+    interceptor.reply((uri, body, callback) =>
+      this.#reply('POST', uri, callback, (parts) => this.#post(parts, body)),
+    );
 
     interceptor = nock('https://api.stripe.com')
       .persist()
       .delete(/v1\/.*/);
+
     this.nockInterceptors.push(interceptor);
-    interceptor.reply((uri) => {
-      const [match, resource, id] = uri.match(/\/?v1\/(\w+)(?:\/?(\w+)){0,2}/) || [null];
 
-      if (!match) {
-        return [500];
-      }
+    interceptor.reply((uri, _body, callback) =>
+      this.#reply('DELETE', uri, callback, (parts) => this.#delete(parts)),
+    );
+  }
 
-      if (resource === 'subscriptions') {
-        return this.#postData(this.subscriptions, id, 'status=canceled', resource);
-      }
-
+  /** What Stripe answers a GET with, from the objects it holds. Lists aren't faked. */
+  #get({ resource, id }) {
+    const collections = {
+      setup_intents: this.setupIntents,
+      customers: this.customers,
+      subscriptions: this.subscriptions,
+      coupons: this.coupons,
+      payment_methods: this.paymentMethods,
+      prices: this.prices,
+      products: this.products,
+    };
+    if (!id || !collections[resource]) {
       return [500];
-    });
+    }
+    return this.#getData(collections[resource], id);
+  }
+
+  /** What Stripe answers a POST with, creating or updating the objects it holds. */
+  #post({ resource, id, action }, body) {
+    if (resource === 'payment_methods' && action === 'attach') {
+      return this.#attach(id, require('qs').parse(body).customer);
+    }
+
+    const collections = {
+      payment_methods: this.paymentMethods,
+      subscriptions: this.subscriptions,
+      customers: this.customers,
+      coupons: this.coupons,
+      prices: this.prices,
+      products: this.products,
+    };
+    if (collections[resource] && !action) {
+      return this.#postData(collections[resource], id, body, resource);
+    }
+
+    if (resource === 'checkout/sessions' && !id) {
+      if (this.checkoutSessionError) {
+        return [400, { error: this.checkoutSessionError }];
+      }
+      const session = require('qs').parse(body);
+      const refusal = customerSessionRefusal(
+        session,
+        this.customers.find((customer) => customer.id === session.customer),
+      );
+      if (refusal) {
+        return [400, { error: { type: 'invalid_request_error', message: refusal } }];
+      }
+      if (this.checkoutParamRefusal && this.checkoutParamRefusal.param in session) {
+        return [400, { error: this.checkoutParamRefusal.error }];
+      }
+      if (this.refuseCheckoutDesign && session.branding_settings) {
+        return [
+          400,
+          {
+            error: {
+              type: 'invalid_request_error',
+              param: 'branding_settings[font_family]',
+              message: 'Invalid branding_settings[font_family]',
+            },
+          },
+        ];
+      }
+      return this.#postData(this.checkoutSessions, null, body, 'checkout');
+    }
+
+    if (resource === 'checkout/sessions' && action === 'expire') {
+      if (this.failCheckoutExpiry) {
+        return [500, { error: { type: 'api_error', message: 'Stripe is down' } }];
+      }
+      return this.#postData(this.checkoutSessions, id, 'status=expired', 'checkout');
+    }
+
+    if (resource === 'webhook_endpoints' && !action) {
+      return this.#postWebhookEndpoint(id, require('qs').parse(body));
+    }
+
+    return [500];
+  }
+
+  /** Creates or updates a webhook endpoint. As at Stripe, only a create answers with the secret. */
+  #postWebhookEndpoint(id, { url, api_version: apiVersion }) {
+    if (!id) {
+      const endpoint = {
+        id: `we_${this.#generateRandomId()}`,
+        object: 'webhook_endpoint',
+        url,
+        api_version: apiVersion,
+        secret: `whsec_${this.#generateRandomId()}`,
+      };
+      this.webhookEndpoints.push(endpoint);
+      return [200, endpoint];
+    }
+    const endpoint = this.webhookEndpoints.find((one) => one.id === id);
+    if (!endpoint) {
+      return resourceMissing('webhook_endpoint', id);
+    }
+    endpoint.url = url ?? endpoint.url;
+    return [200, { ...endpoint, secret: undefined }];
+  }
+
+  /** Attaches a payment method to a customer, as Stripe does, refusing either if Stripe lacks it. */
+  #attach(paymentMethodId, customerId) {
+    const paymentMethod = this.paymentMethods.find((method) => method.id === paymentMethodId);
+    if (!paymentMethod) {
+      return resourceMissing('payment_method', paymentMethodId);
+    }
+    if (!this.customers.some((customer) => customer.id === customerId)) {
+      return resourceMissing('customer', customerId);
+    }
+    paymentMethod.customer = customerId;
+    return [200, paymentMethod];
   }
 
   /**
-   * Sends a webhook event to the Stripe webhook controller.
+   * What Stripe answers a DELETE with: a subscription canceled now, or a deleted webhook endpoint.
+   */
+  #delete({ resource, id }) {
+    if (resource === 'subscriptions' && id) {
+      return this.#postData(
+        this.subscriptions,
+        id,
+        { status: 'canceled', canceled_at: Math.floor(Date.now() / 1000) },
+        resource,
+      );
+    }
+    if (resource === 'webhook_endpoints' && id) {
+      const index = this.webhookEndpoints.findIndex((endpoint) => endpoint.id === id);
+      if (index === -1) {
+        return resourceMissing('webhook_endpoint', id);
+      }
+      this.webhookEndpoints.splice(index, 1);
+      return [200, { id, object: 'webhook_endpoint', deleted: true }];
+    }
+    return [500];
+  }
+
+  /**
+   * Sends a webhook event to the Stripe webhook controller, signed with the site's webhook secret,
+   * as Stripe would send it. Rejects when the webhook doesn't respond with 200, with the error Ghost
+   * logged while handling it as the cause.
    *
    * @param {any} event - The webhook event to send.
    * @returns {Promise<void>} - A promise that resolves when the webhook event is handled.
    */
   async sendWebhook(event) {
-    const webhookController = stripeService.webhookController;
-    await webhookController.handleEvent(event);
+    // Stripe sends every event at the webhook's API version. An event that names none is sent at
+    // Ghost's, so only an event that names another version reaches Ghost as a mismatch.
+    const { API_VERSION } = require('../../core/server/services/stripe/stripe-api');
+    const payload = JSON.stringify({ api_version: API_VERSION, ...event });
+    const req = {
+      body: payload,
+      headers: {
+        'stripe-signature': stripe.webhooks.generateTestHeaderString({
+          payload,
+          secret: stripeService.webhookManager.webhookSecret,
+        }),
+      },
+    };
+    let status;
+    const res = {
+      writeHead(code) {
+        status = code;
+      },
+      end() {},
+    };
+    // The webhook logs why it failed rather than throwing, so keep the first error it logs.
+    const logging = require('@tryghost/logging');
+    const logError = logging.error;
+    let cause;
+    logging.error = function (...args) {
+      cause ??= args
+        .map((arg) => (arg instanceof Error ? arg : arg?.err))
+        .find((err) => err instanceof Error);
+      return logError.apply(this, args);
+    };
+    try {
+      await stripeService.webhookController.handle(req, res);
+    } finally {
+      logging.error = logError;
+    }
+    if (status !== 200) {
+      throw new Error(`The Stripe webhook responded with ${status} to ${event.type}`, { cause });
+    }
   }
 }
 

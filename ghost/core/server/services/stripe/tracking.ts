@@ -1,9 +1,9 @@
-import type Stripe from 'stripe';
 import { COLLECTED_PARTS, portsOf, type CollectedPart } from '@tryghost/checkout';
 import type { Meter } from '../../lib/tracing/meter';
-import type { Tracer } from '../../lib/tracing/tracer';
+import type { Span, Tracer } from '../../lib/tracing/tracer';
 import { SECTION_OF } from '../stripe-checkout-config/models';
-import type { CollectedPhone } from './services/checkout/completed-session';
+import type { StripeWallet } from './stripe-api-responses';
+import type { CollectedPhone } from './webhook/completed-session';
 import {
   CHECKOUT_PARTS,
   type CheckoutPart,
@@ -11,6 +11,8 @@ import {
   partName,
   type Refusal,
 } from './checkout-session-params';
+import { classifyFailure } from './webhook/failures';
+import type { IgnoreReason, WebhookEventKind } from './webhook/webhook-event';
 
 // The spans and counts that record how buyers' Stripe Checkouts go, and how Ghost handles what
 // Stripe sends it. Their names and attributes are defined here, in one place, because the Stripe
@@ -48,7 +50,8 @@ interface BuyerReport {
  * - `signed_in`: a member who signed in before starting the checkout, such as a free member
  *   upgrading.
  * - `unverified`: a member by the email address typed into the checkout, which doesn't prove the
- *   buyer owns it, so the checkout can't change the member's details.
+ *   buyer owns it, so the checkout saves what it collected into custom fields but can't change
+ *   the member's name.
  */
 type Buyer = 'new' | 'signed_in' | 'unverified';
 
@@ -100,8 +103,6 @@ type PartOutcome = 'applied' | 'none' | 'refused' | 'dropped';
  *   off, or the part's fields archived or deleted, while the checkout was open.
  * - `refused`: a custom field refused one of the part's answers, such as a wallet's phone number
  *   that no country the checkout knew could read.
- * - `skipped`: Ghost saved nothing the checkout collected, as it couldn't tell the buyer was the
- *   member it would have saved onto.
  * - `failed`: saving what the checkout collected failed.
  */
 type CollectedPartOutcome =
@@ -110,7 +111,6 @@ type CollectedPartOutcome =
   | 'partly_saved'
   | 'no_destination'
   | 'refused'
-  | 'skipped'
   | 'failed';
 
 /** What the checkout webhook reports to a `stripe_checkout.complete` span while it completes one. */
@@ -121,8 +121,6 @@ export interface CheckoutCompletionAttempt {
   buying(buyer: BuyerReport): void;
   /** Called with what the checkout asked the buyer for and got back, by port, before any is saved. */
   collecting(answers: readonly { port: string }[]): void;
-  /** Called when Ghost saves nothing the checkout collected, as the buyer didn't prove who they are. */
-  skipping(): void;
   /**
    * Called once Ghost has worked out what it can save of what the checkout collected: `kept` are
    * the ports with a custom field to go to, and `refused` what those fields refused, each named by
@@ -137,8 +135,30 @@ export interface CheckoutCompletionAttempt {
 interface WebhookAttempt {
   /** Called once Ghost has checked the event came from Stripe, with its type, such as `invoice.payment_succeeded`. */
   receiving(type: string): void;
-  /** Called when Ghost ignores the event, as it's for a customer whose events Ghost is set to ignore. */
-  ignoring(): void;
+  /** Called with the event's kind once Ghost has parsed it. The kind selects the command. */
+  matching(kind: WebhookEventKind): void;
+}
+
+/** What the webhook did with a verified event. */
+export type WebhookOutcome = { result: 'handled' } | { result: 'ignored'; reason: IgnoreReason };
+
+/**
+ * Runs `operation`. If it throws, records the failure's reason and owner on `span` (see
+ * `classifyFailure`), then rethrows the error.
+ */
+async function recordingFailure<Result>(
+  span: Span,
+  operation: () => Promise<Result>,
+): Promise<Result> {
+  try {
+    return await operation();
+  } catch (err) {
+    const { reason, owner } = classifyFailure(err);
+    span.setAttribute('result', 'failed');
+    span.setAttribute('reason', reason);
+    span.setAttribute('owner', owner);
+    throw err;
+  }
 }
 
 /** A collected part's name on a span, the same name the `stripe_checkout.session` span gives it. */
@@ -172,16 +192,15 @@ function collectedOutcome(
  *   country the checkout knew could read.
  * - `no_destination`: no field takes it now, as collection was switched off or its field deleted
  *   while the checkout was open.
- * - `skipped`: Ghost saved nothing the checkout collected, as it couldn't tell the buyer was the
- *   member it would have saved onto.
  */
-export type CollectedPhoneOutcome = 'saved' | 'refused' | 'no_destination' | 'skipped';
+export type CollectedPhoneOutcome = 'saved' | 'refused' | 'no_destination';
 
 /**
  * The wallet a buyer paid with, as Stripe names it, such as `apple_pay`: `none` for a card or
- * another method, and `unknown` when the checkout's subscription couldn't be found to tell.
+ * another method, and `unknown` when the checkout's subscription couldn't be found to tell. A
+ * wallet's name is counted as Stripe sends it, so a wallet Stripe adds is counted under its own.
  */
-export type CheckoutWallet = Stripe.PaymentMethod.Card.Wallet.Type | 'none' | 'unknown';
+export type CheckoutWallet = StripeWallet | 'none' | 'unknown';
 
 export type StripeTracking = ReturnType<typeof stripeTracking>;
 
@@ -229,7 +248,8 @@ export function stripeTracking({ tracer, meter }: { tracer: Tracer; meter: Meter
      * `CollectedPartOutcome`). Saving what a checkout collected never fails the span: the money is
      * already taken, so a failed save is recorded on the part rather than sending the event again.
      * A completion that fails before Ghost reads what the checkout collected leaves every part
-     * `none`.
+     * `none`. A failed completion also records `result: failed`, a `reason` and an `owner`, the
+     * same as the `stripe.webhook` span.
      */
     checkoutCompletion<Result>(
       complete: (attempt: CheckoutCompletionAttempt) => Promise<Result>,
@@ -242,43 +262,51 @@ export function stripeTracking({ tracer, meter }: { tracer: Tracer; meter: Meter
         }
         // The ports each part had answers for, once the checkout says what it collected.
         let asked: [CollectedPart, string[]][] = [];
-        return complete({
-          completing: (type) => span.setAttribute('type', type),
-          buying: (buyer) => span.setAttribute('member', buyerOf(buyer)),
-          collecting(answers) {
-            asked = COLLECTED_PARTS.map((part): [CollectedPart, string[]] => [
-              part,
-              portsOf(part).filter((port) => answers.some((answer) => answer.port === port)),
-            ]).filter(([, ports]) => ports.length > 0);
-          },
-          skipping() {
-            asked.forEach(([part]) => record(part, 'skipped'));
-          },
-          saving(plan) {
-            asked.forEach(([part, ports]) => record(part, collectedOutcome(ports, plan)));
-          },
-          failing() {
-            asked.forEach(([part]) => record(part, 'failed'));
-          },
-        });
+        return recordingFailure(span, () =>
+          complete({
+            completing: (type) => span.setAttribute('type', type),
+            buying: (buyer) => span.setAttribute('member', buyerOf(buyer)),
+            collecting(answers) {
+              asked = COLLECTED_PARTS.map((part): [CollectedPart, string[]] => [
+                part,
+                portsOf(part).filter((port) => answers.some((answer) => answer.port === port)),
+              ]).filter(([, ports]) => ports.length > 0);
+            },
+            saving(plan) {
+              asked.forEach(([part, ports]) => record(part, collectedOutcome(ports, plan)));
+            },
+            failing() {
+              asked.forEach(([part]) => record(part, 'failed'));
+            },
+          }),
+        );
       });
     },
 
     /**
-     * Records one `stripe.webhook` span for each event Stripe sends to Ghost's webhook, from the
-     * webhook starting on the request to Ghost answering Stripe. The span fails when Ghost answers
-     * with a failure, which makes Stripe send the event again later, including when the event's
-     * signature doesn't show it came from Stripe, as an `UnauthorizedError`. A request with no
-     * body or no signature at all isn't from Stripe, so it records no span.
+     * Records one `stripe.webhook` span for each event Stripe sends to Ghost's webhook, from when
+     * the webhook receives the request until Ghost responds to Stripe. The span fails when Ghost
+     * responds with an error status, which makes Stripe retry the event later, including when the
+     * signature check fails. A request with no body or no signature isn't from Stripe, so it
+     * records no span.
      *
      * The `type` attribute holds the event's type, such as `checkout.session.completed`, and
-     * `ignored` is true for an event Ghost is set to ignore.
+     * `kind` the webhook event kind, which selects the command that handles it. `result` is
+     * `handled`, `ignored` or `failed`. Ignored and failed events also have a `reason`, and failed
+     * events an `owner`: who can fix the failure (see `classifyFailure`). The objectives filter on
+     * `owner`.
      */
-    webhook<Result>(handle: (attempt: WebhookAttempt) => Promise<Result>): Promise<Result> {
+    webhook(handle: (attempt: WebhookAttempt) => Promise<WebhookOutcome>): Promise<WebhookOutcome> {
       return tracer.track('stripe.webhook', (span) =>
-        handle({
-          receiving: (type) => span.setAttribute('type', type),
-          ignoring: () => span.setAttribute('ignored', true),
+        recordingFailure(span, async () => {
+          const outcome = await handle({
+            receiving: (type) => span.setAttribute('type', type),
+            matching: (kind) => span.setAttribute('kind', kind),
+          });
+          for (const [key, value] of Object.entries(outcome)) {
+            span.setAttribute(key, value);
+          }
+          return outcome;
         }),
       );
     },

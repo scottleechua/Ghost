@@ -83,12 +83,12 @@ export default tseslint.config(
     ...strictLinterOptions,
   },
   // ============================================================
-  // Base: server / kernel / shared / frontend / root JS files
+  // Base: server / support / shared / frontend / root JS files
   // ============================================================
   {
     files: [
       'core/server/**/*.js',
-      'core/kernel/**/*.js',
+      'core/support/**/*.js',
       'core/shared/**/*.js',
       'core/frontend/**/*.js',
       'core/*.js',
@@ -114,7 +114,7 @@ export default tseslint.config(
   // TypeScript files
   // ============================================================
   {
-    files: ['core/**/*.ts', '*.ts'],
+    files: ['core/**/*.ts', '*.{ts,mts}'],
     extends: [...tseslint.configs.recommended],
     languageOptions: {
       ecmaVersion: 2022,
@@ -154,7 +154,7 @@ export default tseslint.config(
   // TypeScript override block: must come AFTER tseslint extends to win.
   // ============================================================
   {
-    files: ['core/**/*.ts', '*.ts'],
+    files: ['core/**/*.ts', '*.{ts,mts}'],
     rules: {
       '@typescript-eslint/no-explicit-any': 'off',
       ...tsLegacyRelaxations,
@@ -172,10 +172,10 @@ export default tseslint.config(
     },
   },
   // ============================================================
-  // schema.js: no created_by/updated_by columns
+  // schema.ts: no created_by/updated_by columns
   // ============================================================
   {
-    files: ['core/server/data/schema/schema.js'],
+    files: ['core/server/data/schema/schema.ts'],
     rules: {
       'no-restricted-syntax': [
         'error',
@@ -188,6 +188,28 @@ export default tseslint.config(
           selector: 'Property[key.name="updated_by"]',
           message:
             '`updated_by` is not allowed - The action log should be used to record user actions.',
+        },
+      ],
+    },
+  },
+  // ============================================================
+  // The metafields core knows neither custom fields nor the members resource
+  // ============================================================
+  {
+    files: ['core/server/services/members-metafields/metafields/**'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              // A sibling of the core folder, such as `../callers` or `../custom-fields/namespace`,
+              // rather than a shared library further up.
+              regex: '^\\.\\./(?!\\.\\./)',
+              message:
+                'The metafields core stores and reads fields for any resource and namespace owner. Custom fields and the members resource build on it, not the reverse.',
+            },
+          ],
         },
       ],
     },

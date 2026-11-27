@@ -29,6 +29,14 @@ const BACKUP_TABLES = [
   'user_sessions',
   'verifications',
   'user_two_factors',
+  'oauth_clients',
+  'oauth_resources',
+  'oauth_client_resources',
+  'oauth_refresh_tokens',
+  'oauth_access_tokens',
+  'oauth_consents',
+  'oauth_client_assertions',
+  'oauth_jwks',
   'subscriptions',
   'mobiledoc_revisions',
   'post_revisions',
@@ -114,6 +122,7 @@ const TABLES_ALLOWLIST = [
   'offers',
   'offer_redemptions',
   'snippets',
+  'segments',
 ];
 
 // NOTE: these are non-core settings keys which should never end up in the export file

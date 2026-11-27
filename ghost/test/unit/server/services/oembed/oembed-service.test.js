@@ -2,20 +2,29 @@ const assert = require('node:assert/strict');
 const http = require('http');
 const nock = require('nock');
 const got = require('got').default;
-const logging = require('@tryghost/logging');
+const imageTransform = require('@tryghost/image-transform');
 const sinon = require('sinon');
+const iconv = require('iconv-lite');
 const sharp = require('sharp');
 const zlib = require('zlib');
 
 const OembedService = require('../../../../../core/server/services/oembed/oembed-service');
 const ghostConfig = require('../../../../../core/shared/config');
 const requestExternal = require('../../../../../core/server/lib/request-external');
+const { createLoggingFake } = require('../../../../utils/logging-utils');
 
 describe('oembed-service', function () {
   /** @type {OembedService} */
   let oembedService;
+  let logging;
 
   beforeAll(function () {
+    nock.disableNetConnect();
+  });
+
+  beforeEach(function () {
+    // A fresh fake per test: sinon.restore() in later hooks reverts its stubs.
+    logging = createLoggingFake();
     oembedService = new OembedService({
       config: {
         get() {
@@ -23,9 +32,9 @@ describe('oembed-service', function () {
         },
       },
       externalRequest: requestExternal,
+      imageTransform,
+      logging,
     });
-
-    nock.disableNetConnect();
   });
 
   afterEach(function () {
@@ -115,6 +124,8 @@ describe('oembed-service', function () {
       const externalRequest = sinon.stub().resolves({});
 
       const service = new OembedService({
+        imageTransform,
+        logging,
         config: {
           get() {
             return true;
@@ -140,6 +151,8 @@ describe('oembed-service', function () {
         url: 'https://www.example.com/',
       });
       const service = new OembedService({
+        imageTransform,
+        logging,
         config: {
           get() {
             return true;
@@ -656,7 +669,7 @@ describe('oembed-service', function () {
 
       it('keeps the provider thumbnail when it cannot be stored', async function () {
         sinon.stub(oembedService, 'processImageFromUrl').rejects(new Error('fetch failed'));
-        const loggingStub = sinon.stub(logging, 'error');
+        const loggingStub = logging.error;
         mockVimeoOembed();
 
         const response = await oembedService.fetchOembedDataFromUrl('https://vimeo.com/123');
@@ -687,6 +700,8 @@ describe('oembed-service', function () {
             return `/content/images/${targetPath}`;
           });
           service = new OembedService({
+            imageTransform,
+            logging,
             config: ghostConfig,
             externalRequest: requestExternal,
             imageStore: { getSanitizedFileName: (name) => name, saveRaw },
@@ -722,7 +737,7 @@ describe('oembed-service', function () {
         });
 
         it('falls back to the provider thumbnail when there is no max resolution thumbnail', async function () {
-          const loggingStub = sinon.stub(logging, 'error');
+          const loggingStub = logging.error;
           nock('https://i.ytimg.com')
             .get('/vi/1234/maxresdefault.jpg')
             .reply(404, jpegBytes)
@@ -764,6 +779,8 @@ describe('oembed-service', function () {
 
       it('does not store thumbnails for mentions', async function () {
         const service = new OembedService({
+          imageTransform,
+          logging,
           config: {
             get() {
               return true;
@@ -799,6 +816,8 @@ describe('oembed-service', function () {
       };
 
       const service = new OembedService({
+        imageTransform,
+        logging,
         config: {
           get() {
             return true;
@@ -820,6 +839,8 @@ describe('oembed-service', function () {
 
     it('does not pass the rethrow callback to the external request', async function () {
       const service = new OembedService({
+        imageTransform,
+        logging,
         config: {
           get() {
             return true;
@@ -855,6 +876,8 @@ describe('oembed-service', function () {
       };
 
       const service = new OembedService({
+        imageTransform,
+        logging,
         config: {
           get() {
             return true;
@@ -899,6 +922,8 @@ describe('oembed-service', function () {
 
     const buildService = (saveRaw, bytes) =>
       new OembedService({
+        imageTransform,
+        logging,
         config: ghostConfig,
         imageStore: {
           getSanitizedFileName: sinon.stub().returns('favicon'),
@@ -914,6 +939,8 @@ describe('oembed-service', function () {
     it('normalizes Uint8Array image responses from Got 15 to Buffer', async function () {
       const bytes = new Uint8Array(Buffer.from('img-bytes'));
       const service = new OembedService({
+        imageTransform,
+        logging,
         externalRequest() {
           return {
             buffer: async () => bytes,
@@ -930,6 +957,8 @@ describe('oembed-service', function () {
     it('returns null without fetching when the image URL is missing', async function () {
       const externalRequest = sinon.stub();
       const service = new OembedService({
+        imageTransform,
+        logging,
         config: ghostConfig,
         imageStore: {
           getSanitizedFileName: sinon
@@ -954,6 +983,8 @@ describe('oembed-service', function () {
       const getSanitizedFileName = sinon.stub().returns('sample');
 
       const service = new OembedService({
+        imageTransform,
+        logging,
         config: ghostConfig,
         imageStore: {
           getSanitizedFileName,
@@ -992,6 +1023,8 @@ describe('oembed-service', function () {
       const getSanitizedFileName = sinon.stub().returns('favicon');
 
       const service = new OembedService({
+        imageTransform,
+        logging,
         config: ghostConfig,
         imageStore: {
           getSanitizedFileName,
@@ -1023,6 +1056,8 @@ describe('oembed-service', function () {
       const getSanitizedFileName = sinon.stub().returns('favicon');
 
       const service = new OembedService({
+        imageTransform,
+        logging,
         config: ghostConfig,
         imageStore: {
           getSanitizedFileName,
@@ -1048,6 +1083,8 @@ describe('oembed-service', function () {
       const getSanitizedFileName = sinon.stub().returns('favicon');
 
       const service = new OembedService({
+        imageTransform,
+        logging,
         config: ghostConfig,
         imageStore: {
           getSanitizedFileName,
@@ -1068,6 +1105,8 @@ describe('oembed-service', function () {
 
     it('throws when storage lacks saveRaw', async function () {
       const service = new OembedService({
+        imageTransform,
+        logging,
         config: ghostConfig,
         imageStore: {
           getSanitizedFileName: sinon.stub().returns('sample'),
@@ -1087,6 +1126,8 @@ describe('oembed-service', function () {
 
     it('throws when external request fails', async function () {
       const service = new OembedService({
+        imageTransform,
+        logging,
         config: ghostConfig,
         imageStore: {
           getSanitizedFileName: sinon.stub().returns('sample'),
@@ -1176,6 +1217,8 @@ describe('oembed-service', function () {
           .toBuffer();
 
         const service = new OembedService({
+          imageTransform,
+          logging,
           config: {
             get: () => ({ images: { extensions: ['.avif'] } }),
           },
@@ -1404,6 +1447,8 @@ describe('oembed-service', function () {
       externalRequest.head = sinon.stub().rejects(new Error('blocked'));
 
       const service = new OembedService({
+        imageTransform,
+        logging,
         config: {
           get: sinon.stub().returns('testing'),
           getContentPath: sinon.stub().returns('/tmp/content/images'),
@@ -1476,6 +1521,8 @@ describe('oembed-service', function () {
       });
 
       const service = new OembedService({
+        imageTransform,
+        logging,
         config: {
           get: sinon.stub().returns('testing'),
           getContentPath: sinon.stub().returns('/tmp/content/images'),
@@ -1496,7 +1543,12 @@ describe('oembed-service', function () {
     });
 
     it('resolves a reachable favicon without downloading the full body', async function () {
-      const service = new OembedService({ config: { get: () => 'testing' }, externalRequest: got });
+      const service = new OembedService({
+        imageTransform,
+        logging,
+        config: { get: () => 'testing' },
+        externalRequest: got,
+      });
 
       const result = await service.resolveFaviconUrl(`http://127.0.0.1:${port}/favicon.png`, [
         'image/png',
@@ -1511,7 +1563,12 @@ describe('oembed-service', function () {
     let service;
 
     beforeEach(function () {
-      service = new OembedService({ config: { get: () => 'testing' }, externalRequest: got });
+      service = new OembedService({
+        imageTransform,
+        logging,
+        config: { get: () => 'testing' },
+        externalRequest: got,
+      });
     });
 
     it('returns the final url for a valid icon', async function () {
@@ -1609,7 +1666,12 @@ describe('oembed-service', function () {
 
   describe('findFallbackFavicon', function () {
     it('returns the first match in priority order without waiting on later probes', async function () {
-      const service = new OembedService({ config: { get: () => 'testing' }, externalRequest: got });
+      const service = new OembedService({
+        imageTransform,
+        logging,
+        config: { get: () => 'testing' },
+        externalRequest: got,
+      });
       const resolveFaviconUrl = sinon.stub(service, 'resolveFaviconUrl');
       resolveFaviconUrl.callsFake(() => new Promise(() => {}));
       resolveFaviconUrl.withArgs('https://blog.example.com/favicon.ico').resolves(undefined);
@@ -1625,7 +1687,12 @@ describe('oembed-service', function () {
     });
 
     it('returns undefined when no probe finds a favicon', async function () {
-      const service = new OembedService({ config: { get: () => 'testing' }, externalRequest: got });
+      const service = new OembedService({
+        imageTransform,
+        logging,
+        config: { get: () => 'testing' },
+        externalRequest: got,
+      });
       sinon.stub(service, 'resolveFaviconUrl').resolves(undefined);
 
       assert.equal(await service.findFallbackFavicon('https://example.com/post'), undefined);
@@ -1633,6 +1700,174 @@ describe('oembed-service', function () {
 
     afterEach(function () {
       sinon.restore();
+    });
+  });
+
+  describe('bookmark error logging', function () {
+    afterEach(function () {
+      sinon.restore();
+    });
+
+    it('logs a metadata extraction failure and rejects as an unknown provider', async function () {
+      const loggingStub = logging.error;
+      const service = new OembedService({
+        imageTransform,
+        logging,
+        config: {
+          get() {
+            return true;
+          },
+        },
+        externalRequest: sinon.stub(),
+      });
+
+      await assert.rejects(
+        service.fetchBookmarkData('https://example.com/page', null, 'bookmark'),
+        {
+          name: 'ValidationError',
+          message: 'No provider found for supplied URL.',
+        },
+      );
+      sinon.assert.calledOnce(loggingStub);
+      assert.equal(loggingStub.firstCall.args[0].message, 'cheerio.load() expects a string');
+    });
+
+    it('logs a failed mention icon check and falls back to the default icon', async function () {
+      const loggingStub = logging.error;
+      const failure = new Error('icon unreachable');
+      const externalRequest = sinon.stub();
+      externalRequest.head = sinon.stub().rejects(failure);
+      const service = new OembedService({
+        imageTransform,
+        logging,
+        config: {
+          get() {
+            return true;
+          },
+        },
+        externalRequest,
+      });
+
+      const result = await service.buildBookmarkData(
+        'https://example.com/page',
+        { title: 'Title', icon: 'https://example.com/icon.png' },
+        'mention',
+      );
+
+      sinon.assert.calledOnceWithExactly(externalRequest.head, 'https://example.com/icon.png');
+      sinon.assert.calledOnceWithExactly(loggingStub, failure);
+      assert.equal(result.metadata.icon, 'https://static.ghost.org/v5.0.0/images/link-icon.svg');
+    });
+
+    it('logs a failed page decode and returns the undecoded body', async function () {
+      const loggingStub = logging.error;
+      const failure = new Error('decode failed');
+      sinon.stub(iconv, 'decode').throws(failure);
+      const externalRequest = sinon.stub().resolves({
+        headers: { 'content-type': 'text/html; charset=iso-8859-1' },
+        body: Buffer.from('<p>Page</p>'),
+        url: 'https://example.com/page',
+      });
+      const service = new OembedService({
+        imageTransform,
+        logging,
+        config: {
+          get() {
+            return true;
+          },
+        },
+        externalRequest,
+      });
+
+      const result = await service.fetchPageHtml('https://example.com/page');
+
+      sinon.assert.calledOnceWithExactly(loggingStub, failure);
+      assert.deepEqual(result, {
+        body: '<p>Page</p>',
+        url: 'https://example.com/page',
+        contentType: 'text/html; charset=iso-8859-1',
+      });
+    });
+
+    it('logs a failed bookmark icon store and falls back to the default icon', async function () {
+      const loggingStub = logging.error;
+      const failure = new Error('icon store failed');
+      const service = new OembedService({
+        imageTransform,
+        logging,
+        config: {
+          get() {
+            return true;
+          },
+        },
+        externalRequest: sinon.stub(),
+      });
+      const processImage = sinon.stub(service, 'processImageFromUrl').rejects(failure);
+
+      const result = await service.buildBookmarkData(
+        'https://example.com/page',
+        { title: 'Title', icon: 'https://example.com/icon.png' },
+        'bookmark',
+      );
+
+      sinon.assert.calledOnceWithExactly(processImage, 'https://example.com/icon.png', 'icon');
+      sinon.assert.calledOnceWithExactly(loggingStub, failure);
+      assert.equal(result.metadata.icon, 'https://static.ghost.org/v5.0.0/images/link-icon.svg');
+    });
+
+    it('logs a failed bookmark thumbnail store and keeps the original thumbnail', async function () {
+      const loggingStub = logging.error;
+      const failure = new Error('thumbnail store failed');
+      const service = new OembedService({
+        imageTransform,
+        logging,
+        config: {
+          get() {
+            return true;
+          },
+        },
+        externalRequest: sinon.stub(),
+      });
+      const processImage = sinon.stub(service, 'processImageFromUrl').rejects(failure);
+
+      const result = await service.buildBookmarkData(
+        'https://example.com/page',
+        { title: 'Title', thumbnail: 'https://example.com/cover.png' },
+        'bookmark',
+      );
+
+      sinon.assert.calledOnceWithExactly(
+        processImage,
+        'https://example.com/cover.png',
+        'thumbnail',
+      );
+      sinon.assert.calledOnceWithExactly(loggingStub, failure);
+      assert.equal(result.metadata.thumbnail, 'https://example.com/cover.png');
+    });
+
+    it('logs the cause of an unexpected fetch failure and rejects as an unknown provider', async function () {
+      const loggingStub = logging.error;
+      const failure = new Error('socket hang up');
+      const service = new OembedService({
+        imageTransform,
+        logging,
+        config: {
+          get() {
+            return true;
+          },
+        },
+        externalRequest: sinon.stub().rejects(failure),
+      });
+
+      await assert.rejects(service.fetchOembedDataFromUrl('https://example.com/page', 'mention'), {
+        name: 'ValidationError',
+        message: 'No provider found for supplied URL.',
+        context: 'https://example.com/page',
+      });
+      sinon.assert.calledOnce(loggingStub);
+      const logged = loggingStub.firstCall.args[0];
+      assert.equal(logged.message, 'Encountered error when fetching oembed');
+      assert.match(logged.stack, /^Error: socket hang up/);
     });
   });
 
@@ -1650,6 +1885,8 @@ describe('oembed-service', function () {
       externalRequest.defaults = { options: {} };
 
       service = new OembedService({
+        imageTransform,
+        logging,
         config: {
           get() {
             return true;

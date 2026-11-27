@@ -138,7 +138,8 @@ module.exports = {
       ),
     ];
   },
-  'ghost/core/{server,kernel,shared,frontend}/**/*.{js,ts}': (files) => buildBoundaryCommand(files),
+  'ghost/core/{server,support,shared,frontend}/**/*.{js,ts}': (files) =>
+    buildBoundaryCommand(files),
   'apps/{admin,shade,admin-x-framework,activitypub,portal,comments-ui,signup-form,sodo-search,announcement-bar,admin-toolbar}/src/**/*.{js,ts,tsx,jsx}':
     (files) => buildBoundaryCommand(files),
   '*.{mjs,mts,cts,json,jsonc,json5,yml,yaml,css,mdx}': (files) => buildOxfmtCommand(files),
@@ -146,6 +147,6 @@ module.exports = {
   '{**/AGENTS.md,tools/scripts/ci/check-agent-guidance.ts}': () => 'pnpm lint:agent-guidance',
   '{.agents/skills/**,.claude/skills/**,tools/scripts/ci/check-agent-skill-links.ts}': () =>
     'pnpm lint:agent-skills',
-  '{package.json,pnpm-workspace.yaml,packages/**/package.json,packages/_template/**,tools/scripts/ci/check-internal-packages.ts,tools/gx/**,tools/scripts/lib/constants.ts}':
+  '{package.json,pnpm-workspace.yaml,packages/**/package.json,contracts/*/package.json,packages/_template/**,tools/scripts/ci/check-internal-packages.ts,tools/gx/**,tools/scripts/lib/constants.ts}':
     () => 'pnpm lint:packages',
 };

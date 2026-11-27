@@ -11,7 +11,17 @@ import {
   useState,
 } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
 import { AdminLink } from '@/shared/admin-link';
+import { seenOthersOn, usePresence } from '@/shared/presence/use-presence';
+import { PresenceAvatars } from '@/shared/presence/presence-avatars';
+import {
+  LeaseAvatar,
+  LeaseOutdatedNotice,
+  LeaseSettingsNotice,
+  LeaseTakeoverConfirm,
+} from './lease/lease-notice';
+import { useEditLease } from './lease/use-edit-lease';
 import { getPostListReturnUrl } from '@/posts/api';
 import { reloadAdmin } from '@/auth/api';
 import { NotFound } from '@/shared/not-found';
@@ -59,6 +69,7 @@ import type { EditorStatusRecord } from './post-status';
 import { buildPublishFlowPost } from './publish/flow-post';
 import { PAID_TIERS_SEARCH_PARAMS } from './browse-params';
 import { initialEmailError } from './publish/use-publish-flow';
+import { bannerSaveError } from './session/error-mapping';
 import { SessionBanners } from './session/session-banners';
 import { type InvalidField, settingsFieldErrorFor, titleError } from './session/settings-fields';
 import { ReauthDialog } from './session/reauth-dialog';
@@ -79,6 +90,11 @@ import { useSettingsShortcut } from './use-editor-shortcuts';
 import { useSettingsOpen } from './use-settings-open';
 import { useWritingFocus } from './use-writing-focus';
 import type { EditorRecord } from './session/projection';
+
+/** Said once the latest version has replaced what a tab typed onto an older one. */
+function notifyReloadedOverTyping() {
+  toast.info('A newer version was saved elsewhere, so it was loaded here.');
+}
 
 function EditorLoadError({ message, onRetry }: { message: string; onRetry: () => void }) {
   return (
@@ -191,6 +207,74 @@ function EditorContent({
     siteUrl: cardConfig.siteUrl,
     currentUserId: currentUser?.id,
   });
+  const presenceResource = session.persistedId
+    ? { id: session.persistedId, type: postType }
+    : undefined;
+  const leaseEnabled = useFeatureFlag('editorLease');
+  // Opening a post does not take it from anyone; the first unsaved edit does.
+  const presence = usePresence(presenceResource ? [presenceResource] : [], presenceResource, {
+    lease: leaseEnabled,
+    wantsLease: session.isDirty(),
+  });
+  const showPresence = useFeatureFlag('editorPresence');
+  const editLease = useEditLease({
+    lease: presence.lease,
+    active: presence.active,
+    currentUserId: currentUser?.id,
+    isDirty: session.isDirty,
+    flush: session.commitField,
+    reload: session.reload,
+    hasNewerVersion: session.hasNewerVersion,
+    revert: session.revert,
+    onBehind: notifyReloadedOverTyping,
+  });
+  const heldUserId = editLease.locked && editLease.reason === 'held' ? editLease.userId : null;
+  const [confirmationHolder, setConfirmationHolder] = useState<string | null>(null);
+  const confirmingTakeover = confirmationHolder !== null && confirmationHolder === heldUserId;
+  if (confirmationHolder !== null && confirmationHolder !== heldUserId) {
+    setConfirmationHolder(null);
+  }
+  const changeTakeoverConfirm = (open: boolean) => setConfirmationHolder(open ? heldUserId : null);
+  const requestTakeover = () => changeTakeoverConfirm(true);
+  const leaseHolderId =
+    editLease.locked && editLease.reason === 'held' && !editLease.ownTab ? editLease.userId : null;
+  const editingHere =
+    !editLease.locked &&
+    typeof presence.lease === 'object' &&
+    presence.lease !== null &&
+    presence.lease.mine;
+  const hasEditingAvatar =
+    editingHere ||
+    (editLease.locked && (editLease.reason === 'held' || editLease.reason === 'taking'));
+  const hasEditingLease = typeof presence.lease === 'object' && presence.lease !== null;
+  const currentUserShownAsEditor =
+    editingHere ||
+    (editLease.locked &&
+      (editLease.reason === 'taking' || (editLease.reason === 'held' && editLease.ownTab)));
+  const hasOtherPeople = (showPresence && presence.active.length > 0) || leaseHolderId !== null;
+  // The first answer takes a round trip, so until then the lock is drawn only
+  // where this tab last saw someone else, such as in the posts list.
+  const [othersOnEntry, setOthersOnEntry] = useState(
+    () => presenceResource !== undefined && seenOthersOn(presenceResource),
+  );
+  if (othersOnEntry && presence.lease !== 'pending') {
+    setOthersOnEntry(false);
+  }
+  const lockShown =
+    editLease.locked &&
+    (editLease.reason !== 'pending' || othersOnEntry || presence.active.length > 0);
+  const currentViewer =
+    currentUser && hasOtherPeople && !currentUserShownAsEditor
+      ? { id: currentUser.id, name: currentUser.name, image: currentUser.profile_image ?? null }
+      : undefined;
+  // The holder leads the row and is shown once; everyone else is a viewer.
+  const otherPresence = useMemo(
+    () =>
+      leaseHolderId
+        ? presence.active.filter((entry) => entry.userId !== leaseHolderId)
+        : presence.active,
+    [presence.active, leaseHolderId],
+  );
   const [tkCount, setTkCount] = useState(0);
   const chromeEntrance = useScreenEntrance();
   const [openFlow, setOpenFlow] = useState<OpenFlow>('none');
@@ -205,6 +289,11 @@ function EditorContent({
     },
     [refusedEntry],
   );
+  // A flow left open when another tab takes the document would still write: its
+  // buttons are not the header's, which the lock disables.
+  if (editLease.locked && openFlow !== 'none') {
+    setOpenFlow('none');
+  }
   const openPublishFlow = useCallback(() => changeOpenFlow('publish'), [changeOpenFlow]);
   const openUpdateFlow = useCallback(() => changeOpenFlow('update'), [changeOpenFlow]);
   const holdBack = useCallback(
@@ -257,6 +346,8 @@ function EditorContent({
   const [settingsMoving, setSettingsMoving] = useState(false);
   const shellRef = useRef<HTMLDivElement>(null);
   const settingsFrameRef = useRef<HTMLDivElement>(null);
+  // The settings panel saves each edit as it is made, so a tab without the lease gets none.
+  const settingsLocked = editLease.locked;
   const settingsToggleRef = useRef<HTMLButtonElement>(null);
   const [settingsToggleWidth, setSettingsToggleWidth] = useState(0);
   useLayoutEffect(() => {
@@ -395,10 +486,14 @@ function EditorContent({
   const featureImage = useFeatureImageBinding(session, session.loadedRecord, session.contentKey);
   const writingAreaRef = useRef<HTMLDivElement>(null);
   const editorFont = useEditorFont();
-  // The chrome stays while the settings panel is out, or the status line reports
-  // a failed save or a failed newsletter.
+  // Keep collaborators visible while writing, along with open settings or a failed save/newsletter.
   const writingFocus = useWritingFocus({
-    blocked: settingsOpen || settingsMoving || session.state.kind === 'error' || didEmailFail,
+    blocked:
+      hasOtherPeople ||
+      settingsOpen ||
+      settingsMoving ||
+      session.state.kind === 'error' ||
+      didEmailFail,
     writingAreaRef,
   });
   const leaveGuard = useEditorLeaveGuard(session, postType);
@@ -445,6 +540,15 @@ function EditorContent({
           state={session.state}
           onReload={session.reload}
         />
+        {/* A save that already collided has the session's banner, which offers the same reload. */}
+        {bannerSaveError(session.state, session.pendingSave) ? null : (
+          <LeaseOutdatedNotice
+            contentText={session.contentText}
+            lease={editLease}
+            resourceType={postType}
+            onReload={session.reload}
+          />
+        )}
         <ReauthDialog
           email={currentUser?.email ?? ''}
           open={session.reauthOpen}
@@ -495,11 +599,44 @@ function EditorContent({
                   />
                 </Box>
               ) : null}
-              <Box className="col-start-3 ml-auto" data-writing-focus={writingFocus}>
+              {/* A tab that was typing when it was locked must see why at once, not once the chrome fades back in. */}
+              <Box
+                className="col-start-3 ml-auto"
+                data-writing-focus={editLease.locked ? undefined : writingFocus}
+              >
                 <PageHeader.ActionGroup className="gap-x-[calc(var(--spacing)*3*(1-var(--editor-settings-progress)))] editor-settings-motion-[column-gap]">
+                  <Inline
+                    align="center"
+                    className={cn(
+                      (hasEditingAvatar || (showPresence && otherPresence.length > 0)) && 'pr-2',
+                    )}
+                    gap="none"
+                  >
+                    <LeaseAvatar
+                      contentText={session.contentText}
+                      currentUser={currentUser}
+                      editingHere={editingHere}
+                      hasUnsavedContent={session.hasUnsavedContent}
+                      lease={editLease}
+                      resourceId={session.persistedId}
+                      resourceType={postType}
+                      onTakeOver={requestTakeover}
+                    />
+                    {showPresence ? (
+                      <PresenceAvatars
+                        active={otherPresence}
+                        className={cn(hasEditingAvatar && '-ml-2')}
+                        currentUser={currentViewer}
+                        dimmed={hasEditingLease}
+                        resourceType={postType}
+                        tooltipDelayDuration={0}
+                      />
+                    ) : null}
+                  </Inline>
                   <EditorHeaderActions
                     bottomBar={bottomBar}
                     currentUser={currentUser}
+                    locked={editLease.locked}
                     offersEmailRetry={offersEmailRetry}
                     openFlow={openFlow}
                     post={publishPost}
@@ -528,11 +665,13 @@ function EditorContent({
                 actionsSlotRef={setBottomBar}
                 autofocusTitle={!record}
                 cardConfig={currentCardConfig}
+                dimmed={lockShown}
                 excerptError={settingsFieldErrorFor('custom_excerpt', session.settings)}
                 featureImage={featureImage}
                 font={editorFont.font}
                 handleRef={postEditorRef}
                 postType={postType}
+                readOnly={editLease.locked}
                 settingsMoving={settingsMoving}
                 showExcerpt={showExcerpt}
                 titleAndFeatureImageHidden={
@@ -565,6 +704,18 @@ function EditorContent({
               featureImage={featureImage.featureImage}
               frameRef={settingsFrameRef}
               hasInlineExcerpt={showExcerpt}
+              locked={settingsLocked}
+              lockNotice={
+                <LeaseSettingsNotice
+                  contentText={session.contentText}
+                  hasUnsavedContent={session.hasUnsavedContent}
+                  lease={editLease}
+                  resourceId={session.persistedId}
+                  resourceType={postType}
+                  onTakeOver={requestTakeover}
+                />
+              }
+              lockShown={lockShown}
               opensInPlace={settingsMemory.restored}
               postType={postType}
               reveal={settingsReveal}
@@ -574,6 +725,14 @@ function EditorContent({
           </RefusedEntryContext.Provider>
         ) : null}
         {snippetDialog}
+        <LeaseTakeoverConfirm
+          lease={editLease}
+          open={confirmingTakeover}
+          resourceId={session.persistedId}
+          resourceType={postType}
+          onOpenChange={changeTakeoverConfirm}
+          onTakeOver={presence.takeOver}
+        />
         <DirtyConfirmDialog testId={editorLeaveDialog} {...leaveGuard.dialogProps} />
       </Inline>
     </Stack>

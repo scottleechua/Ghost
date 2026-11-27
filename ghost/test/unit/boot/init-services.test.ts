@@ -10,6 +10,7 @@ function createServicesHarness({ rescheduleOnBoot = true } = {}) {
   const gifts = sinon.stub();
   const analytics = sinon.stub();
   const emailSuppressionList = { init: sinon.stub().resolves() };
+  const oembed = sinon.stub().resolves();
   const mentions = sinon.stub().resolves();
   // Recommendations initializes synchronously and reads the mentions fields during its call.
   const recommendations = sinon.stub();
@@ -22,6 +23,10 @@ function createServicesHarness({ rescheduleOnBoot = true } = {}) {
   const staff = sinon.stub().resolves();
   const linkTracking = sinon.stub().resolves();
   const memberWelcomeEmails = sinon.stub().resolves();
+  const indexnow = sinon.stub().resolves();
+  const indexnowStop = sinon.stub().resolves();
+  const slack = sinon.stub().resolves();
+  const slackStop = sinon.stub().resolves();
   // Webhook listener registration is synchronous in production; boot awaits whatever it returns.
   const webhooks = sinon.stub();
   const register = sinon.stub();
@@ -57,6 +62,7 @@ function createServicesHarness({ rescheduleOnBoot = true } = {}) {
         deliveryService: {},
         service: {},
       },
+      './server/services/oembed': { default: { init: oembed } },
       './server/services/mentions': {
         default: { init: mentions, service: { controller: {}, sendingService: {} } },
       },
@@ -76,20 +82,24 @@ function createServicesHarness({ rescheduleOnBoot = true } = {}) {
       './server/services/link-tracking': { init: linkTracking },
       './server/services/member-welcome-emails': { default: { init: memberWelcomeEmails } },
       './server/services/webhooks': { listen: webhooks },
+      './server/services/indexnow-ping': { default: { init: indexnow, stop: indexnowStop } },
+      './server/services/slack-ping': { default: { init: slack, stop: slackStop } },
       './server/services/media-inliner': { default: { init: media, service: {} } },
       './server/services/post-scheduling': { default: { rescheduleAll: reschedule } },
       './server/services/jobs-service/register-job-handlers': { default: register },
       './server/services/signing-keys': { default: { service: signingKeys } },
       './server/services/automations': { automationsService: { init: automations } },
+      './server/models': { Member: { readSegmentsWith: sinon.stub() } },
     },
     { fallback: () => ({ ...genericService, default: genericService }) },
   );
   return {
-    initServices: (): Promise<void> =>
-      initServices({ config: {}, prometheusClient: null, jobsService }),
+    initServices: (ghostServer?: { registerCleanupTask: sinon.SinonStub }): Promise<void> =>
+      initServices({ config: {}, prometheusClient: null, jobsService, ghostServer }),
     stripe,
     emailAddress,
     gifts,
+    oembed,
     mentions,
     recommendations,
     analytics,
@@ -103,6 +113,10 @@ function createServicesHarness({ rescheduleOnBoot = true } = {}) {
     linkTracking,
     memberWelcomeEmails,
     webhooks,
+    indexnow,
+    indexnowStop,
+    slack,
+    slackStop,
     register,
     signingKeys,
     start,
@@ -238,6 +252,35 @@ it('registers the webhook listeners once, after mentions initialization', async 
   sinon.assert.callOrder(boot.mentions, boot.webhooks);
 });
 
+for (const [label, init, stop] of [
+  ['IndexNow', 'indexnow', 'indexnowStop'],
+  ['Slack ping', 'slack', 'slackStop'],
+] as const) {
+  it(`registers ${label} stop as a server cleanup task once it has initialized`, async function () {
+    const boot = createServicesHarness();
+    const registerCleanupTask = sinon.stub();
+
+    await boot.initServices({ registerCleanupTask });
+
+    const registrations = registerCleanupTask.getCalls().filter((call) => call.args[1] === label);
+    assert.equal(registrations.length, 1);
+    assert.ok(boot[init].firstCall.calledBefore(registrations[0]));
+    sinon.assert.notCalled(boot[stop]);
+
+    await registrations[0].args[0]();
+    sinon.assert.calledOnceWithExactly(boot[stop]);
+  });
+
+  it(`does not stop ${label} when boot has no server to register with`, async function () {
+    const boot = createServicesHarness();
+
+    await boot.initServices();
+
+    sinon.assert.calledOnce(boot[init]);
+    sinon.assert.notCalled(boot[stop]);
+  });
+}
+
 it('constructs gifts over the tiers root before tiers initialization starts', async function () {
   const boot = createServicesHarness();
 
@@ -282,6 +325,8 @@ for (const dependency of [
   'tiers',
   'webhooks',
   'staff',
+  'indexnow',
+  'slack',
 ] as const) {
   it(`waits for ${dependency} initialization to finish before registering or starting jobs`, async function () {
     const boot = createServicesHarness();
@@ -320,6 +365,26 @@ for (const dependency of [
     sinon.assert.notCalled(boot.reschedule);
   });
 }
+
+it('waits for oEmbed initialization to finish before initializing mentions and recommendations', async function () {
+  // Mentions and Recommendations read the ready oEmbed instance while they initialize.
+  const boot = createServicesHarness();
+  const ready = Promise.withResolvers<void>();
+  boot.oembed.returns(ready.promise);
+  const startup = boot.initServices();
+
+  try {
+    await setImmediate();
+    sinon.assert.calledOnce(boot.oembed);
+    sinon.assert.notCalled(boot.mentions);
+    sinon.assert.notCalled(boot.recommendations);
+  } finally {
+    ready.resolve();
+    await startup;
+  }
+
+  sinon.assert.callOrder(boot.oembed, boot.mentions, boot.recommendations);
+});
 
 it('waits for mentions initialization to finish before initializing recommendations', async function () {
   // Recommendations reads the ready Mentions instance while it initializes.

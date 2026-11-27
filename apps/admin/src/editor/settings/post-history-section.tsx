@@ -18,6 +18,8 @@ export interface PostHistorySectionProps {
   state: SaveEngineState;
   /** The excerpt has its own home under the title, and is restored with the version. */
   showExcerpt: boolean;
+  /** Another tab holds the document, so no version is restored into this one. */
+  locked?: boolean;
 }
 
 /**
@@ -31,6 +33,7 @@ export function PostHistorySection({
   cardConfig,
   showExcerpt,
   state,
+  locked = false,
 }: PostHistorySectionProps) {
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -47,16 +50,18 @@ export function PostHistorySection({
   // A version written before the excerpt existed carries none, and the post
   // keeps the excerpt it has rather than losing it to the restore.
   const restore = (revision: RevisionEntry) =>
-    session.restoreRevision({
-      lexical: revision.lexical,
-      title: revision.title,
-      custom_excerpt: showExcerpt
-        ? (revision.customExcerpt ?? session.settings.custom_excerpt)
-        : session.settings.custom_excerpt,
-      feature_image: revision.featureImage,
-      feature_image_alt: revision.featureImageAlt,
-      feature_image_caption: revision.featureImageCaption,
-    });
+    locked
+      ? Promise.resolve(false)
+      : session.restoreRevision({
+          lexical: revision.lexical,
+          title: revision.title,
+          custom_excerpt: showExcerpt
+            ? (revision.customExcerpt ?? session.settings.custom_excerpt)
+            : session.settings.custom_excerpt,
+          feature_image: revision.featureImage,
+          feature_image_alt: revision.featureImageAlt,
+          feature_image_caption: revision.featureImageCaption,
+        });
 
   return (
     <>
@@ -77,6 +82,7 @@ export function PostHistorySection({
           isPublished={record?.status === 'published'}
           open={open}
           postType={postType}
+          readOnly={locked}
           restoreError={
             (state.kind === 'error' && state.error.kind === 'session-invalid') ||
             state.kind === 'reauth-pending'

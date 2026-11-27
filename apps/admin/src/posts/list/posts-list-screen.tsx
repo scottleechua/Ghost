@@ -3,8 +3,12 @@ import { LoadingIndicator } from '@tryghost/shade/components';
 import { ListPage, usePageChrome } from '@tryghost/shade/page-templates';
 import { LoadMoreButton, useScrollRestoration } from '@/shared/virtual-list';
 import { cn, LucideIcon } from '@tryghost/shade/utils';
-import { FilterBar, PageHeader } from '@tryghost/shade/patterns';
+import { FilterBar, PageHeader, useMobileFilters } from '@tryghost/shade/patterns';
 import { PostListRow } from './components/post-list-row';
+import { usePresence, usePresenceEnabled } from '@/shared/presence/use-presence';
+import { usePresenceByResource } from '@/shared/presence/use-presence-by-resource';
+import { useFeatureFlag } from '@tryghost/admin-x-framework/hooks';
+import { useVisibleResources } from '@/shared/presence/use-visible-resources';
 import { PostsEmptyState } from './components/posts-empty-state';
 import { PostsFilters } from './components/posts-filters';
 import { ManagePostViewPopover } from './components/manage-post-view-popover';
@@ -168,6 +172,15 @@ export function PostsListScreen({ resource }: { resource: PostResource }) {
   const revealRef = useRevealOnMount<HTMLDivElement>(mountedLoading);
 
   useScrollRestoration({ parentRef: listRef, isLoading, resetOnNavigation: true });
+  const presenceEnabled = usePresenceEnabled();
+  const presenceResources = useVisibleResources(
+    listRef,
+    items.map((item) => ({ id: item.id, type: resource === 'pages' ? 'page' : 'post' })),
+    presenceEnabled,
+  );
+  const presence = usePresence(presenceResources);
+  const presenceForResource = usePresenceByResource(presence.active);
+  const showPresence = useFeatureFlag('editorPresence');
 
   // Snapshotted when the menu item is picked: Radix closes the menu at once,
   // which clears a transient selection before the modal could read it.
@@ -289,6 +302,8 @@ export function PostsListScreen({ resource }: { resource: PostResource }) {
 
   runPostActionRef.current = runPostAction;
 
+  const mobileFilters = useMobileFilters();
+  const [filterBarContainer, setFilterBarContainer] = useState<HTMLDivElement | null>(null);
   const { visitorCounts, memberCounts } = usePostAnalyticsCounts({
     items,
     webAnalyticsEnabled: metricsSettings.webAnalyticsEnabled,
@@ -312,13 +327,23 @@ export function PostsListScreen({ resource }: { resource: PostResource }) {
                                 crowd the title. */}
               <PageHeader.Actions>
                 <PageHeader.ActionGroup>
-                  {!showFilterBar && (
+                  {(!showFilterBar || mobileFilters) && (
                     <PostsFilters
+                      barContainer={filterBarContainer}
                       currentUser={currentUser}
                       filters={filters}
                       iconOnly={true}
                       params={params}
                       resource={resource}
+                      viewActions={
+                        mobileFilters && canManageView ? (
+                          <ManagePostViewPopover
+                            activeView={activeView}
+                            params={params}
+                            resource={resource}
+                          />
+                        ) : undefined
+                      }
                       onFiltersChange={setFilters}
                     />
                   )}
@@ -342,7 +367,8 @@ export function PostsListScreen({ resource }: { resource: PostResource }) {
                 </PageHeader.ActionGroup>
               </PageHeader.Actions>
             </PageHeader>
-            {showFilterBar && (
+            {mobileFilters && showFilterBar && <div ref={setFilterBarContainer} />}
+            {showFilterBar && !mobileFilters && (
               <FilterBar>
                 <PostsFilters
                   currentUser={currentUser}
@@ -393,6 +419,7 @@ export function PostsListScreen({ resource }: { resource: PostResource }) {
                   // Not under a large title, whose header has
                   // its own separator.
                   className={cn(
+                    'in-data-[admin7-mobile=true]:max-lg:border-t-0',
                     !largeTitles && 'border-t border-border-default',
                     selection.modifierHeld && [
                       'cursor-default',
@@ -422,6 +449,7 @@ export function PostsListScreen({ resource }: { resource: PostResource }) {
                       metricsSettings={metricsSettings}
                       paidMembersEnabled={paidMembersEnabled}
                       post={item}
+                      presenceActive={showPresence ? presenceForResource(item.id) : undefined}
                       resource={resource}
                       showGiftLink={menuGiftLinkPostId === item.id}
                       timezone={timezone}

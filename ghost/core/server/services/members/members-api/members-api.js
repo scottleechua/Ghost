@@ -5,7 +5,7 @@ const logging = require('@tryghost/logging');
 
 const PaymentsService = require('./services/payments-service');
 const TokenService = require('./services/token-service');
-const GeolocationService = require('./services/geolocation-service');
+const { lookupGeolocation } = require('../../../lib/geolocation');
 const MemberBREADService = require('./services/member-bread-service');
 const { MemberAccountService } = require('../account-service');
 const MemberRepository = require('./repositories/member-repository');
@@ -21,6 +21,18 @@ const { EmailSuppressedEvent } = require('../../email-suppression-list/email-sup
 const MagicLink = require('../../../lib/magic-link/magic-link');
 const DomainEvents = require('@tryghost/domain-events');
 const automationsApi = require('../../automations/automations-api');
+
+// The geolocation stored on a member: country and region of the IP they signed up from
+async function getGeolocationFromIP(ip) {
+  const location = await lookupGeolocation(ip);
+  return (
+    location && {
+      country: location.country,
+      country_code: location.country_code,
+      region: location.region,
+    }
+  );
+}
 
 module.exports = function MembersAPI({
   tokenConfig: { issuer, signingKeys },
@@ -73,6 +85,7 @@ module.exports = function MembersAPI({
   emailAddressService,
   giftService,
   metafieldValues,
+  metafieldActivity,
   metafieldBindings,
   tierRequirements,
   checkouts,
@@ -134,7 +147,7 @@ module.exports = function MembersAPI({
     labsService,
     memberAttributionService,
     MemberEmailChangeEvent,
-    metafieldValues,
+    metafieldActivity,
     AutomatedEmailRecipient,
     giftSubscriptions: giftService,
   });
@@ -165,8 +178,6 @@ module.exports = function MembersAPI({
     metafieldValues,
     transaction: (fn) => Member.transaction(fn),
   });
-
-  const geolocationService = new GeolocationService();
 
   const magicLinkService = new MagicLink({
     transporter,
@@ -335,7 +346,7 @@ module.exports = function MembersAPI({
     let geolocation;
     if (reqIp) {
       try {
-        geolocation = JSON.stringify(await geolocationService.getGeolocationFromIP(reqIp));
+        geolocation = JSON.stringify(await getGeolocationFromIP(reqIp));
       } catch (err) {
         logging.warn(err);
         // no-op, we don't want to stop anything working due to
@@ -444,7 +455,7 @@ module.exports = function MembersAPI({
     }
 
     // max request time is 500ms so shouldn't slow requests down too much
-    const geolocation = JSON.stringify(await geolocationService.getGeolocationFromIP(ip));
+    const geolocation = JSON.stringify(await getGeolocationFromIP(ip));
     if (geolocation) {
       await users.update({ geolocation }, { id: member.id });
     }
@@ -510,10 +521,6 @@ module.exports = function MembersAPI({
     });
   };
 
-  const bus = new (require('events').EventEmitter)();
-
-  bus.emit('ready');
-
   DomainEvents.subscribe(EmailSuppressedEvent, async function (event) {
     const member = await memberRepository.get({ email: event.data.emailAddress });
     if (!member) {
@@ -533,7 +540,6 @@ module.exports = function MembersAPI({
     cycleTransientId,
     setMemberGeolocationFromIp,
     getPublicConfig,
-    bus,
     sendEmailWithMagicLink,
     getMagicLink,
     members: users,

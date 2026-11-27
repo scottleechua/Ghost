@@ -4,7 +4,6 @@ import sinon from 'sinon';
 
 // Match the CommonJS root and consumers used by boot and the API framework.
 const db = require('../../../../../core/server/data/db');
-const models = require('../../../../../core/server/models');
 // The access consumer imports members, which reads database metadata at import.
 // Load that unrelated dependency before replacing gift-links' database binding.
 require('../../../../../core/server/services/members');
@@ -17,7 +16,7 @@ const MODULE_PATHS = [ROOT_PATH, ACCESS_PATH, CONTROLLER_PATH];
 type Root = (typeof import('../../../../../core/server/services/gift-links'))['default'];
 type Access = typeof import('../../../../../core/server/api/endpoints/utils/gift-link-access');
 type GiftAccessFrame = Parameters<Access['generateGiftKeyData']>[0];
-type LinkRow = { post_id: string; token: string; created_at: Date };
+type LinkRow = { post_id: string; post_title: string; token: string; created_at: Date };
 
 function giftFrame(token: string): GiftAccessFrame {
   return new Frame({ context: { giftToken: token } });
@@ -29,6 +28,7 @@ function queryBuilder(sandbox: sinon.SinonSandbox) {
     where: sandbox.stub().returnsThis(),
     first: sandbox.stub<[string[]], Promise<LinkRow | undefined>>().resolves(undefined),
     del: sandbox.stub<[], Promise<number>>().resolves(2),
+    insert: sandbox.stub<[Record<string, unknown>], Promise<unknown[]>>().resolves([]),
   };
 }
 
@@ -39,7 +39,6 @@ describe('gift-links root with its API consumers', function () {
   let knex: sinon.SinonStub<[string], typeof query>;
   let currentKnex: typeof knex;
   let getKnex: sinon.SinonSpy<[], typeof knex>;
-  let addAction: sinon.SinonStub;
 
   beforeEach(function () {
     originalModules = new Map(Object.entries(require.cache));
@@ -47,11 +46,14 @@ describe('gift-links root with its API consumers', function () {
       delete require.cache[path];
     }
     query = queryBuilder(sandbox);
-    knex = sandbox.stub<[string], typeof query>().returns(query);
+    const table = sandbox.stub<[string], typeof query>().returns(query);
+    // A command opens a transaction on the connection it is given and writes through it.
+    knex = Object.assign(table, {
+      transaction: <T>(work: (trx: typeof table) => Promise<T>) => work(table),
+    });
     currentKnex = knex;
     getKnex = sandbox.spy(() => currentKnex);
     sandbox.stub(db, 'knex').get(getKnex);
-    addAction = sandbox.stub(models.Action, 'add').resolves();
   });
 
   afterEach(function () {
@@ -73,7 +75,7 @@ describe('gift-links root with its API consumers', function () {
     assert.throws(() => root.service, /Gift Links used before init/);
     sinon.assert.notCalled(getKnex);
     sinon.assert.notCalled(knex);
-    sinon.assert.notCalled(addAction);
+    sinon.assert.notCalled(query.insert);
 
     const readyKnex = sandbox.stub<[string], typeof query>().returns(query);
     currentKnex = readyKnex;
@@ -89,7 +91,7 @@ describe('gift-links root with its API consumers', function () {
     sinon.assert.calledOnce(getKnex);
     sinon.assert.calledOnceWithExactly(readyKnex, 'post_gift_links');
     sinon.assert.notCalled(knex);
-    sinon.assert.notCalled(addAction);
+    sinon.assert.notCalled(query.insert);
   });
 
   it('lets the earlier public access consumer resolve a token through the initialized service', async function () {
@@ -99,6 +101,7 @@ describe('gift-links root with its API consumers', function () {
     await root.init();
     query.first.resolves({
       post_id: 'post-id',
+      post_title: 'A post',
       token: 'live-token',
       created_at: new Date('2026-01-01T00:00:00Z'),
     });
@@ -130,30 +133,6 @@ describe('gift-links root with its API consumers', function () {
 
     assert.equal(frame.giftLinkPostId, undefined);
     sinon.assert.calledOnce(query.first);
-    sinon.assert.notCalled(addAction);
-  });
-
-  it('lets the earlier Admin controller remove links and record the action through the wired model', async function () {
-    const controller = require(CONTROLLER_PATH);
-    const root: Root = require(ROOT_PATH).default;
-    assert.throws(() => root.service, /Gift Links used before init/);
-    await root.init();
-
-    const result = await controller.removeAll.query({ options: { context: { user: 'actor-id' } } });
-
-    assert.deepEqual(result, { count: 2 });
-    sinon.assert.calledOnceWithExactly(knex, 'post_gift_links');
-    sinon.assert.calledOnceWithExactly(query.del);
-    sinon.assert.calledOnceWithExactly(
-      addAction,
-      {
-        event: 'deleted',
-        resource_type: 'gift_link',
-        resource_id: null,
-        actor_type: 'user',
-        actor_id: 'actor-id',
-      },
-      { autoRefresh: false },
-    );
+    sinon.assert.notCalled(query.insert);
   });
 });

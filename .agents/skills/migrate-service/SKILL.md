@@ -10,19 +10,22 @@ an execution workflow, not permission to redesign a service's lifecycle. The
 [services guide](../../../ghost/core/server/services/README.md) is the authoring
 guide; read it rather than copying an earlier migration blindly.
 
+For a new service, use [add-service](../add-service/SKILL.md) to generate and
+complete the root instead.
+
 ## 1. Establish the starting point
 
 - Read the root and nearest `AGENTS.md`, the
   [services guide](../../../ghost/core/server/services/README.md),
-  [kernel contract](../../../ghost/core/kernel/README.md#service-initialization),
+  [Support contract](../../../ghost/core/support/README.md#service-initialization),
   [testing guide](../../../docs/contributing/testing.md) and
   [contribution workflow](../../../docs/contributing/workflow.md).
 - Inspect status, existing branches/worktrees and related PRs. Preserve unrelated
   work. Fetch `origin` and start from current `origin/main`; refresh dependencies
   with `pnpm bootstrap` in a fresh checkout or after dependency changes.
-- Read this service's entry in
-  `ghost/core/server/services/service-inventory.yaml` and any existing migration
-  plan. If a plan-registry skill is available, use it to find/update that plan;
+- Read this service's entry under `services` in
+  `ghost/core/server/services/legacy-service-inventory.yaml` and any existing
+  migration plan. If a plan-registry skill is available, use it to find/update that plan;
   do not create a competing plan in the repository.
 - Verify prerequisites are merged. An open tests or enforcement PR is not main.
   Preparation can proceed against a proposed policy, but record its exact head
@@ -72,8 +75,8 @@ regression; `gx services verify` looks for the literal path, not one built from
 variables. Assert each rejected target as well as its rule and source. Keep
 allowances out of standalone skill/tooling PRs.
 Seek review when that distinction is unclear or a broader policy change is
-needed; do not widen the rule merely to make lint pass. Normal inventory and
-root-shape opt-ins still belong in each migration.
+needed; do not widen the rule merely to make lint pass. Deleting the service's
+legacy entry still belongs in each migration.
 
 Preserve late acquisition with getters/factories when dependencies are unavailable
 at boot. Inspect `pnpm gx services report <name>` and the full
@@ -97,7 +100,7 @@ Run those suites with their neighboring consumers in one worker to check isolati
 Cover the real risk: retained consumers, configuration timing, transaction or
 cache behavior, boot ordering and resource cleanup. Use existing cold-boot
 HTTP/job coverage where it already proves readiness. Do not copy a boot harness
-for every service or duplicate generic kernel concurrency/retry tests.
+for every service or duplicate generic Support concurrency/retry tests.
 For async ordering tests, verify both a missing required await and a harmless
 extra await: the first must fail and the second must pass. Avoid checks that
 count microtask turns; follow the testing guide's async-ordering advice.
@@ -118,7 +121,7 @@ when existing tests protect it.
 ## 4. Make the smallest initializer change
 
 - Create a TypeScript top-level `index.ts` default-exporting `defineService`
-  from the kernel. Return one fully ready instance from its factory, or one
+  from Support. Return one fully ready instance from its factory, or one
   typed object when several objects are built together.
 - Expose normal operations on `.service`. Keep classes and implementation
   contracts in implementation files; root named exports are type-only.
@@ -138,30 +141,51 @@ when existing tests protect it.
 - If startup acquires resources, clean up that attempt before rejecting. Do not
   dispose borrowed shared resources or change normal shutdown ownership.
 
-If the service requires new kernel features, a restart/replacement policy, an API
+If the service requires new Support features, a restart/replacement policy, an API
 redesign or broad boot orchestration, record the concrete mismatch and separate
 that decision from the small migration. Do not silently expand its scope.
 
 Migration tests may receive mechanical import/type/stub and initializer-await
-adaptations. New behavioral assertions or substantial harness changes return to
-preparation. The only new cases permitted in the migration commit are boundary
-regressions for new exact dependency allowances. Never weaken assertions,
+adaptations. New assertions about behavior the old implementation already has,
+and substantial harness changes, return to preparation. The migration commit
+adds new cases only for what cannot be tested before the root exists:
+
+- Boundary regressions for new exact dependency allowances.
+- Boot order, where another root reads this one: boot finishes this root's
+  `init()` before it starts theirs.
+- Readiness: a consumer's `init()` fails until this root is ready, and a
+  consumer loaded before `init()` reads the instance on use.
+
+Each must fail under a change you can name. Never weaken assertions,
 coverage gates, lint or types to make the refactor pass.
 
-## 5. Update metadata and verify
+## 5. Update the inventory and verify
 
-Update this service's inventory entry: `migrated`, entry points, evidence,
-contracts, extras and remaining gaps. Repair affected file references and
-startup-order descriptions in other entries mechanically, without changing
-their unrelated assessments.
-Preserve historical audit provenance;
-record the inspected base and distinguish old evidence from new validation.
-Audit SHAs must be commits on main: a branch commit disappears on squash merge.
-Do not restore manual totals or erase unrelated backlog items.
+A migrated service is no longer legacy:
 
-Opt the root into `ghost/service-root-shape` in `.oxlintrc.json` as required by
-the current configuration; the tooling scope check must agree with the inventory.
-`migrated: true` also opts implementations into the boundary checks. Do not claim enforcement passed if that policy was
+- Delete its entry under `services` in the legacy service inventory. Git
+  history keeps the audit record.
+- Delete all its entries from `.dependency-cruiser-known-violations.json`. A
+  service that is not legacy cannot have any.
+- If the root declares extras, move their catalogue to the service's entry in
+  the inventory's `followUps` section. A suggested future home, and
+  notes on what `defineService` does not do for the service yet, go there too.
+  That entry holds nothing else; leave it out when nothing is open.
+- Move any bug the entry's `blockers` describe to the inventory's `knownBugs`
+  section, so deleting the entry does not lose it.
+- Repair affected file references and startup-order descriptions in other
+  legacy entries mechanically, without changing their unrelated assessments.
+  An audit SHA you add must be a commit on main: a branch commit disappears on
+  squash merge.
+
+There is no lint list to update. Deleting the entry applies
+`ghost/service-root-shape` to the root and full boundary enforcement to the
+implementation. It also applies `ghost/boot-awaits-service-init` and the
+standard services boot test: boot must bind the root with `.default` and await
+its `init()`, as
+[creating a service](../../../ghost/core/server/services/README.md#creating-a-service)
+shows. Never add a legacy entry or defer a service's dependency
+checks: CI rejects both. Do not claim enforcement passed if that policy was
 only checked in a temporary integration or is still awaiting merge.
 
 Run focused tests before/after, relevant real consumer/DB checks and the default
@@ -175,7 +199,7 @@ main. Keep unrelated fixes out of the migration.
 
 Review the final diff: one service, unchanged operation behavior, no hidden
 composition, and only justified metadata/enforcement changes. New test cases
-are limited to boundary regressions for new exact dependency allowances.
+are limited to those step 4 allows.
 Use the repository commit skill and make **one commit for this service**.
 Keep unrelated tooling/skill changes on their own branch. Report the branch,
 commit, validation and unresolved prerequisites. Push/open a PR only within the

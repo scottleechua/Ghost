@@ -1,5 +1,5 @@
 import { isLocalhost } from '@tryghost/app-contracts/manifest';
-import { defineService } from '../../../kernel/define-service';
+import { defineService } from '../../../support/define-service';
 import { ExplorePingService } from './explore-ping-service';
 
 export default defineService('Explore ping', () => {
@@ -8,7 +8,6 @@ export default defineService('Explore ping', () => {
     settingsCache: require('../../../shared/settings-cache'),
     config,
     logging: require('@tryghost/logging'),
-    ghostVersion: require('@tryghost/version'),
     request: require('@tryghost/request'),
     posts: require('../posts/posts-service-instance')(),
     members: require('../members'),

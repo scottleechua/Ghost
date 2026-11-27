@@ -1,18 +1,24 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { userEvent } from 'vitest/browser';
+import { page, userEvent } from 'vitest/browser';
 
 import {
   allowUnhandledRequests,
+  changelogEntry,
   configResponse,
   currentRoute,
   currentUserResponse,
   fakeAdminEndpoint,
   fakeAdminStats,
+  fakeEndpoint,
+  fakeNewsletters,
+  fakePosts,
+  fakeSnippets,
   fakeTags,
   renderAdminApp,
   type RenderAdminAppOptions,
 } from '@test-utils/acceptance';
 import { sidebarScreen } from './sidebar.screen';
+import { whatsNewScreen } from '@/whats-new/whats-new.screen';
 
 // The floating sidebar's closed circle is named after the site (the site fixture's title).
 const SITE_TITLE = 'Test Site';
@@ -53,6 +59,116 @@ describe('Floating sidebar (admin7Design)', () => {
   beforeEach(() => {
     fakeAdminStats.memberCount();
     fakeAdminStats.mrr();
+  });
+
+  it('keeps the banner and account usable while the navigation scrolls in a short viewport', async () => {
+    await page.viewport(1280, 420);
+    fakeTags([]);
+    fakeEndpoint('GET', 'https://ghost.org/changelog.json', {
+      posts: [changelogEntry({ published_at: '2025-06-01T00:00:00.000Z' })],
+    });
+    const options = floatingSidebar();
+    const me = currentUserResponse();
+    me.users[0].accessibility = JSON.stringify({
+      whatsNew: { lastSeenDate: '2025-01-01T00:00:00.000Z' },
+      navigation: { expanded: { posts: true, members: true } },
+    });
+    try {
+      await renderAdminApp('/tags', {
+        ...options,
+        boot: { browseMe: { response: me } },
+      });
+      await expect.poll(sidebarScreen.floatingState).toBe('pinned');
+      const banner = whatsNewScreen.banner();
+      await expect.element(banner).toBeVisible();
+      await expect.element(sidebarScreen.userMenuTrigger()).toBeVisible();
+      const bannerRegion = banner.element().querySelector('[data-slot=banner-content]');
+      if (!(bannerRegion instanceof HTMLElement)) {
+        throw new Error('Expected the banner scroll region');
+      }
+      expect(getComputedStyle(bannerRegion).overflowY).toBe('auto');
+      expect(bannerRegion.clientHeight).toBeGreaterThan(0);
+      await expect
+        .poll(
+          () =>
+            bannerRegion.getBoundingClientRect().bottom <=
+            sidebarScreen.userMenuTrigger().element().getBoundingClientRect().top,
+        )
+        .toBe(true);
+
+      const nav = sidebarScreen.shellNav().element().querySelector('[data-sidebar=content]');
+      if (!(nav instanceof HTMLElement)) {
+        throw new Error('Expected scrollable sidebar navigation');
+      }
+      await expect.poll(() => nav.scrollHeight > nav.clientHeight).toBe(true);
+      const footer = nav.parentElement?.querySelector('[data-sidebar=footer-region]');
+      if (!(footer instanceof HTMLElement)) {
+        throw new Error('Expected the fixed sidebar footer region');
+      }
+      expect(nav.getBoundingClientRect().bottom).toBeGreaterThan(
+        footer.getBoundingClientRect().top,
+      );
+      const bannerTop = bannerRegion.getBoundingClientRect().top;
+      const avatarBottom = sidebarScreen.userMenuTrigger().element().getBoundingClientRect().bottom;
+      nav.scrollTop = nav.scrollHeight;
+
+      expect(bannerRegion.getBoundingClientRect().top).toBe(bannerTop);
+      await expect.element(sidebarScreen.navLink('Settings')).toBeVisible();
+      await expect
+        .poll(
+          () =>
+            sidebarScreen.navLink('Settings').element().getBoundingClientRect().bottom <=
+            footer.getBoundingClientRect().top + 1,
+        )
+        .toBe(true);
+      await expect.element(banner).toBeVisible();
+      await whatsNewScreen.dismissButton().click();
+      await expect(whatsNewScreen.banner()).toHaveCount(0);
+      expect(sidebarScreen.userMenuTrigger().element().getBoundingClientRect().bottom).toBe(
+        avatarBottom,
+      );
+      await sidebarScreen.userMenuTrigger().click();
+      await expect.element(sidebarScreen.profileMenuItem()).toBeVisible();
+    } finally {
+      await page.viewport(1280, 800);
+    }
+  });
+
+  it('lets the last menu item scroll clear of the footer gradient without a banner', async () => {
+    await page.viewport(1280, 420);
+    fakeTags([]);
+    try {
+      await renderAdminApp('/tags', floatingSidebar());
+      await expect.poll(sidebarScreen.floatingState).toBe('pinned');
+      const nav = sidebarScreen.shellNav().element().querySelector('[data-sidebar=content]');
+      const footer = sidebarScreen
+        .shellNav()
+        .element()
+        .querySelector('[data-sidebar=footer-region]');
+      if (!(nav instanceof HTMLElement) || !(footer instanceof HTMLElement)) {
+        throw new Error('Expected the scrolling navigation and fixed footer');
+      }
+      await expect.poll(() => nav.scrollHeight > nav.clientHeight).toBe(true);
+      expect(nav.getBoundingClientRect().bottom).toBeGreaterThan(
+        footer.getBoundingClientRect().top,
+      );
+      const avatarBottom = sidebarScreen.userMenuTrigger().element().getBoundingClientRect().bottom;
+
+      nav.scrollTop = nav.scrollHeight;
+
+      await expect
+        .poll(
+          () =>
+            sidebarScreen.navLink('Settings').element().getBoundingClientRect().bottom <=
+            footer.getBoundingClientRect().top + 1,
+        )
+        .toBe(true);
+      expect(sidebarScreen.userMenuTrigger().element().getBoundingClientRect().bottom).toBe(
+        avatarBottom,
+      );
+    } finally {
+      await page.viewport(1280, 800);
+    }
   });
 
   it.each([
@@ -131,6 +247,163 @@ describe('Floating sidebar (admin7Design)', () => {
     await expect.poll(preferences.savedMode, SAVE_TIMEOUT).toBe('full');
   });
 
+  it('clips the keyboard opening from the compact circle until the panel finishes growing', async () => {
+    fakeTags([]);
+    fakePreferencesApi();
+    await renderAdminApp('/tags', floatingSidebar({ mode: 'compact' }));
+    await userEvent.hover(sidebarScreen.shellMain());
+    await expect.poll(sidebarScreen.floatingState).toBe('closed');
+    const capsule = sidebarScreen
+      .shellNav()
+      .element()
+      .querySelector('[data-slot=floating-sidebar]');
+    if (!(capsule instanceof HTMLElement)) {
+      throw new Error('Expected the floating sidebar capsule');
+    }
+    await expect.poll(() => getComputedStyle(capsule).transitionProperty).not.toBe('none');
+    const frames: Array<{ width: number; overflow: string }> = [];
+    let animationFrame = 0;
+    const sample = () => {
+      if (capsule.dataset.state === 'pinned') {
+        frames.push({
+          width: capsule.getBoundingClientRect().width,
+          overflow: getComputedStyle(capsule).overflow,
+        });
+      }
+      animationFrame = requestAnimationFrame(sample);
+    };
+    animationFrame = requestAnimationFrame(sample);
+    try {
+      await userEvent.keyboard('{Control>}b{/Control}');
+      await expect.poll(sidebarScreen.floatingState).toBe('pinned');
+      await Promise.all(capsule.getAnimations().map((animation) => animation.finished));
+      await expect.poll(() => getComputedStyle(capsule).overflow).toBe('visible');
+      const finalWidth = capsule.getBoundingClientRect().width;
+      const growingFrames = frames.filter((frame) => frame.width < finalWidth - 1);
+      expect(growingFrames.length).toBeGreaterThan(0);
+      expect(growingFrames.every((frame) => frame.overflow === 'hidden')).toBe(true);
+    } finally {
+      cancelAnimationFrame(animationFrame);
+    }
+  });
+
+  it('keeps growing when a preferences save lands while the panel pins', async () => {
+    fakeTags([]);
+    // A first visit saves that What's New was seen; held, it lands mid-morph.
+    let landSave = () => {};
+    const saveHeld = new Promise<void>((resolve) => {
+      landSave = resolve;
+    });
+    const saves = fakeAdminEndpoint('PUT', /^\/users\/\w+\//, async ({ body }) => {
+      await saveHeld;
+      return body;
+    });
+    await renderAdminApp('/tags', floatingSidebar({ mode: 'compact' }));
+    await expect.poll(sidebarScreen.floatingState).toBe('closed');
+    const capsule = sidebarScreen
+      .shellNav()
+      .element()
+      .querySelector('[data-slot=floating-sidebar]');
+    if (!(capsule instanceof HTMLElement)) {
+      throw new Error('Expected the floating sidebar capsule');
+    }
+    await expect.poll(() => getComputedStyle(capsule).transitionProperty).not.toBe('none');
+    await expect.poll(() => saves.requests.length).toBe(1);
+    // Paused as it starts, so the morph is still in flight whenever the save lands.
+    let growing: Animation[] = [];
+    const morphStates = () => [...new Set(growing.map((animation) => animation.playState))];
+    capsule.addEventListener('transitionrun', (event) => {
+      if (event.target === capsule && !growing.length) {
+        growing = capsule.getAnimations();
+        for (const animation of growing) {
+          animation.pause();
+        }
+        landSave();
+      }
+    });
+
+    await userEvent.keyboard('{Control>}b{/Control}');
+    await expect.poll(sidebarScreen.floatingState).toBe('pinned');
+    await expect.poll(morphStates).toEqual(['paused']);
+    // Saves run one at a time: the sidebar's own is sent once the held one has been applied.
+    await expect.poll(() => saves.requests.length).toBe(2);
+    // A transition the save cut short is idle; these resume and run to their end.
+    expect(morphStates()).toEqual(['paused']);
+    for (const animation of growing) {
+      animation.play();
+    }
+    await expect.poll(morphStates).toEqual(['finished']);
+  });
+
+  it('opens on hover only once the pointer has been outside it, though it comes straight from beyond the window', async () => {
+    fakeTags([]);
+    const moveTo = (x: number, y: number) =>
+      userEvent.hover(page.elementLocator(document.documentElement), {
+        position: { x, y },
+        force: true,
+      });
+    await moveTo(-10, 300);
+    await renderAdminApp('/tags', floatingSidebar({ mode: 'compact' }));
+    await expect.poll(sidebarScreen.floatingState).toBe('closed');
+    const circle = sidebarScreen
+      .shellNav()
+      .element()
+      .querySelector('[data-slot=floating-sidebar]')!
+      .getBoundingClientRect();
+    const x = circle.left + circle.width / 2;
+    const settle = () =>
+      new Promise<void>((resolve) => {
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+      });
+
+    await moveTo(x, circle.top + circle.height / 2);
+    await moveTo(x + 2, circle.top + circle.height / 2);
+    await moveTo(x, circle.bottom + 160);
+    await settle();
+    expect(sidebarScreen.floatingState()).toBe('closed');
+
+    await userEvent.hover(sidebarScreen.shellMain());
+    await moveTo(x, circle.bottom + 160);
+    await expect.poll(sidebarScreen.floatingState).toBe('open');
+  });
+
+  it('waits for the pointer to move and come to rest before opening under it, back from the editor', async () => {
+    fakeTags([]);
+    fakePosts([]);
+    fakeSnippets([]);
+    fakeNewsletters([]);
+    const moveTo = (x: number, y: number) =>
+      userEvent.hover(page.elementLocator(document.documentElement), {
+        position: { x, y },
+        force: true,
+      });
+    await renderAdminApp('/tags', floatingSidebar({ mode: 'compact' }));
+    await expect.poll(sidebarScreen.floatingState).toBe('closed');
+    await userEvent.hover(sidebarScreen.shellMain());
+    const circle = sidebarScreen
+      .shellNav()
+      .element()
+      .querySelector('[data-slot=floating-sidebar]')!
+      .getBoundingClientRect();
+    const x = circle.left + circle.width / 2;
+    const y = circle.top + circle.height / 2;
+    await moveTo(x, y);
+    await sidebarScreen.createPostLink().click();
+    await expect.poll(currentRoute).toMatch(/^\/editor\//);
+
+    await moveTo(x, y);
+    window.history.back();
+    await expect.poll(currentRoute).toBe('/tags');
+    await expect.poll(sidebarScreen.floatingState).toBe('closed');
+    await new Promise((resolve) => {
+      setTimeout(resolve, 400);
+    });
+    expect(sidebarScreen.floatingState()).toBe('closed');
+
+    await moveTo(x + 2, y);
+    await expect.poll(sidebarScreen.floatingState).toBe('open');
+  });
+
   it('opens the closed circle on focus or click and closes it with Escape', async () => {
     fakeTags([]);
     await renderAdminApp('/tags', floatingSidebar({ mode: 'compact' }));
@@ -153,7 +426,7 @@ describe('Floating sidebar (admin7Design)', () => {
     await expect.poll(sidebarScreen.floatingState).toBe('closed');
   });
 
-  it('lists Ghost(Pro) with Settings and moves Help to the user menu', async () => {
+  it('lists Ghost(Pro) with Settings and leaves Help to the top bar', async () => {
     fakeTags([]);
     const config = configResponse({ labs: { admin7Design: true } });
     config.config.hostSettings = { billing: { enabled: true, url: 'https://billing.example.com' } };
@@ -168,7 +441,8 @@ describe('Floating sidebar (admin7Design)', () => {
     await expect.element(sidebarScreen.navLink('Help')).not.toBeInTheDocument();
 
     await sidebarScreen.userMenuTrigger().click();
-    await expect.element(sidebarScreen.helpMenuItem()).toBeVisible();
+    await expect.element(sidebarScreen.profileMenuItem()).toBeVisible();
+    await expect.element(sidebarScreen.helpMenuItem()).not.toBeInTheDocument();
   });
 
   it('shows Settings navigation in the same sidebar, pinned without saving the mode', async () => {

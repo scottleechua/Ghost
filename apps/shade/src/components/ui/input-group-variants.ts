@@ -7,6 +7,7 @@ const inputGroupVariants = cva(
     // Shared surface chrome (border, bg, radius, transition, invalid state).
     inputSurfaceClasses.base,
     inputSurfaceClasses.invalidWithin,
+    inputSurfaceClasses.disabledFieldWithin,
 
     // Wrapper layout + group context (input-group specific).
     'group/input-group relative flex w-full items-center outline-hidden data-[disabled=true]:bg-field-disabled-surface [&>[data-slot=input-group-control]]:bg-transparent',
@@ -20,8 +21,9 @@ const inputGroupVariants = cva(
 
     // Focus state — scoped to the input-group control specifically so that
     // focusing an InputGroupButton inside the group does NOT trigger the surface
-    // focus ring. This is why we don't use inputSurface('within') here.
-    'has-[[data-slot=input-group-control]:focus-visible]:border-focus-ring has-[[data-slot=input-group-control]:focus-visible]:ring-2 has-[[data-slot=input-group-control]:focus-visible]:ring-focus-ring/25 has-[[data-slot=input-group-control]:focus-visible]:outline-hidden',
+    // focus ring. Invalid groups keep the recipe's error border and ring color
+    // when focused. This is why we don't use inputSurface('within') here.
+    'has-[[data-slot=input-group-control]:focus-visible]:ring-2 has-[[data-slot=input-group-control]:focus-visible]:outline-hidden has-[[data-slot=input-group-control]:focus-visible]:not-has-[[aria-invalid=true]]:border-focus-ring has-[[data-slot=input-group-control]:focus-visible]:not-has-[[aria-invalid=true]]:ring-focus-ring/25',
     'in-data-[admin7-design=true]:has-[[data-slot=input-group-control]:focus-visible]:bg-control-surface',
   ),
   {

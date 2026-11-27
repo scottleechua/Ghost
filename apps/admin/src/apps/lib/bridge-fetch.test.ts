@@ -20,6 +20,7 @@ describe('createAdminApiFetch', () => {
   beforeEach(() => {
     vi.stubGlobal('fetch', fetchMock);
     session = new AbortController();
+    token.send.mockImplementation((call) => call('ghost_app_current'));
   });
 
   afterEach(() => {
@@ -27,7 +28,44 @@ describe('createAdminApiFetch', () => {
     vi.clearAllMocks();
   });
 
-  const adminApiFetch = createAdminApiFetch({ apiRoot: new URL(API_ROOT), ghostVersion: '6.0' });
+  const token = {
+    send: vi.fn<(call: (token: string) => Promise<Response>) => Promise<Response>>(),
+  };
+
+  const adminApiFetch = createAdminApiFetch({
+    apiRoot: new URL(API_ROOT),
+    approvedScopes: new Set(['post:browse', 'post:add', 'post:edit', 'tag:browse']),
+    ghostVersion: '6.0',
+    token,
+  });
+
+  it('refuses a call the installation wasn’t approved for, before sending anything', async () => {
+    await expect(adminApiFetch({ path: '/tiers/' }, session.signal)).rejects.toThrow(
+      "This app wasn't approved for product:browse, which GET /tiers/ needs",
+    );
+    await expect(
+      adminApiFetch({ path: '/posts/?include=count.clicks' }, session.signal),
+    ).rejects.toMatchObject({ code: 'blocked' });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('includes how posts performed for an app approved for post:read_stats', async () => {
+    fetchMock.mockImplementation(() => Promise.resolve(new Response('{}')));
+    const withStats = createAdminApiFetch({
+      apiRoot: new URL(API_ROOT),
+      approvedScopes: new Set(['post:browse', 'post:read_stats']),
+      token,
+    });
+
+    await withStats({ path: '/posts/?include=email,count.clicks' }, session.signal);
+    // With nothing named, Ghost's defaults, how posts performed included.
+    await withStats({ path: '/posts/' }, session.signal);
+
+    expect(fetchMock.mock.calls.map(([url]) => (url as URL).href)).toEqual([
+      `${API_ROOT}posts/?include=email,count.clicks`,
+      `${API_ROOT}posts/?include=authors,email,count.clicks`,
+    ]);
+  });
 
   it('sends Admin’s own headers and drops any the app set to replace them', async () => {
     fetchMock.mockResolvedValue(new Response('{}'));
@@ -42,7 +80,11 @@ describe('createAdminApiFetch', () => {
     );
 
     const [, init] = fetchMock.mock.calls[0];
-    expect(init?.headers).toEqual({ 'app-pragma': 'no-cache', 'x-ghost-version': '6.0' });
+    expect(init?.headers).toEqual({
+      'app-pragma': 'no-cache',
+      'x-ghost-version': '6.0',
+      authorization: 'Bearer ghost_app_current',
+    });
   });
 
   it('labels a body as JSON itself, whatever content type the app set', async () => {
@@ -67,6 +109,7 @@ describe('createAdminApiFetch', () => {
       'app-pragma': 'no-cache',
       'content-type': 'application/json',
       'x-ghost-version': '6.0',
+      authorization: 'Bearer ghost_app_current',
     });
   });
 
@@ -91,12 +134,19 @@ describe('createAdminApiFetch', () => {
       body: '{"posts":[]}',
     });
     const [url, init] = fetchMock.mock.calls[0];
-    expect(url).toEqual(new URL(`${API_ROOT}posts/?limit=5`));
+    // With no include named, the app gets the defaults it may have, without how posts performed.
+    expect(url).toEqual(new URL(`${API_ROOT}posts/?limit=5&include=tags,authors`));
+    // The app's token is the only credential: the staff session's cookie isn't sent.
     expect(init).toMatchObject({
       method: 'GET',
-      credentials: 'include',
+      credentials: 'omit',
       redirect: 'manual',
-      headers: { 'app-pragma': 'no-cache', 'x-ghost-version': '6.0', 'x-podcast-trace': 'abc' },
+      headers: {
+        'app-pragma': 'no-cache',
+        'x-ghost-version': '6.0',
+        'x-podcast-trace': 'abc',
+        authorization: 'Bearer ghost_app_current',
+      },
     });
   });
 
@@ -191,8 +241,29 @@ describe('createAdminApiFetch', () => {
     expect(answer.status).toBe(401);
     expect(answer.body).toBe('{"errors":[]}');
     expect(handleSessionExpiry).toHaveBeenCalledExactlyOnceWith(
-      new URL(`${API_ROOT}posts/`),
+      new URL(`${API_ROOT}posts/?include=tags,authors`),
       response,
     );
+  });
+
+  it('gives the app the response its token source settled on', async () => {
+    token.send.mockImplementation(async (call) => {
+      await call('ghost_app_expired');
+      return call('ghost_app_renewed');
+    });
+    fetchMock
+      .mockResolvedValueOnce(
+        new Response('{"errors":[{"code":"APP_TOKEN_INVALID"}]}', { status: 401 }),
+      )
+      .mockResolvedValueOnce(new Response('{"posts":[]}'));
+
+    const answer = await adminApiFetch({ path: '/posts/' }, session.signal);
+
+    expect(answer).toMatchObject({ status: 200, body: '{"posts":[]}' });
+    expect(
+      fetchMock.mock.calls.map(
+        ([, init]) => (init?.headers as Record<string, string>).authorization,
+      ),
+    ).toEqual(['Bearer ghost_app_expired', 'Bearer ghost_app_renewed']);
   });
 });

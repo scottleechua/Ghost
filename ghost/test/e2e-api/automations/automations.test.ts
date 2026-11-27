@@ -5,7 +5,6 @@ import { vi } from 'vitest';
 import assert from 'node:assert/strict';
 import sinon from 'sinon';
 import { mockSystemTime } from '../../utils/clock-utils';
-// @ts-expect-error This module lacks type definitions.
 import DomainEvents from '@tryghost/domain-events';
 import * as db from '../../../core/server/data/db';
 // @ts-expect-error This module lacks type definitions.
@@ -444,9 +443,10 @@ describe('automations', function () {
       cancel_at_period_end: boolean;
       start_date: number;
       current_period_end: number;
-      canceled_at?: number;
+      canceled_at: number | null;
       items: {
         data: {
+          id: string;
           price: {
             id: string;
             product: string;
@@ -482,11 +482,13 @@ describe('automations', function () {
         customer: customerId,
         status: 'active',
         cancel_at_period_end: false,
+        canceled_at: null,
         start_date: now,
         current_period_end: now + 86400 * 31,
         items: {
           data: [
             {
+              id: 'si_123',
               price: {
                 id: 'price_123',
                 product: 'product_123',

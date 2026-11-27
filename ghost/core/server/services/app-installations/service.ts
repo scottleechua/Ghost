@@ -1,20 +1,30 @@
-import type { AppFailureCode } from '@tryghost/app-contracts';
+import type { AppFailureCode, ManifestChange } from '@tryghost/app-contracts';
 import errors from '@tryghost/errors';
+import type { GhostLogger } from '@tryghost/logging';
 import type { Knex } from 'knex';
 import type { AppManifest } from '@tryghost/app-contracts/manifest';
-import type { RecordAppInstallationAction, RequestContext } from './actions';
+import {
+  AppChangesApproved,
+  AppInstalled,
+  AppUninstalled,
+  type OnAppInstallationUpdated,
+} from './changes';
+import type { RequestContext } from '../../lib/actor';
 import {
   alreadyInstalled,
   AppInstallationsRepository,
+  retryOnDeadlock,
   type AddedRow,
+  type InstallationAccess,
   type WriteOutcome,
 } from './app-installations-repository';
 import type { AppInstallationHistoryEntry, Installation, InstallationWithHistory } from './codec';
+import { ensureTransaction, transactionOf } from '../../lib/ensure-transaction';
 import {
   approvalWrite,
   changesFrom,
+  installChanges,
   recheckWrite,
-  type AppManifestChange,
   type ManifestWrite,
 } from './decide-on-manifest';
 import type { FetchIcon } from './fetch-icon';
@@ -22,9 +32,13 @@ import { approvalManifestIds, buildHistory } from './history';
 import type { IdentityChecker, PinnedIdentity, StartedChallenge } from './identity-check';
 import type { LoadedManifest, LoadManifest } from './load-manifest';
 import type { AppInstallationStatus } from './schema';
+import type { AppTokens } from '../../auth/better-auth/app-tokens';
+import type { Principal } from '../../auth/principal';
+import type { AppSessionToken } from './serializers';
+import { AppSessionTokens } from './session-tokens';
 
 export type { AppInstallationHistoryEntry } from './codec';
-export type { AppManifestChange } from './decide-on-manifest';
+export type { AppSessionToken } from './serializers';
 
 /** What a publisher reviews before installing an app, or before approving changes to one. */
 export interface AppInstallationPreview {
@@ -56,17 +70,19 @@ export interface AppInstallationPreview {
     manifest_url: string;
     manifest: AppManifest;
     icon_data_url: string | null;
-    changes: AppManifestChange[];
+    /** Field changes by path, then scope changes in the registry's order. */
+    changes: ManifestChange[];
   } | null;
 }
 
 /**
  * The session is pinned to `installation.revision` as it was when the session started.
  * Every change to the installation increments the revision, so the session ends once it
- * changes.
+ * changes. Only an active installation gets a token.
  */
 export interface AppSession {
   installation: Installation;
+  token: AppSessionToken | null;
 }
 
 function notFound() {
@@ -137,32 +153,45 @@ function iconCopyKeptBy(
 }
 
 export class AppInstallationsService {
+  private knex: Knex;
   private repository: AppInstallationsRepository;
-  private recordAction: RecordAppInstallationAction;
+  private onAppInstallationUpdated: OnAppInstallationUpdated;
   private loadManifest: LoadManifest;
   private identity: IdentityChecker;
   private fetchIcon: FetchIcon;
+  private sessionTokens: AppSessionTokens;
   /** Re-checks in progress, by installation ID. Sessions that start together share one. */
   private rechecking = new Map<string, Promise<void>>();
 
   constructor({
     knex,
-    recordAction,
+    onAppInstallationUpdated,
     loadManifest,
     identity,
     fetchIcon,
+    appTokens,
+    logging,
   }: {
     knex: Knex;
-    recordAction: RecordAppInstallationAction;
+    /** Called with each change a command makes, inside the command's transaction. */
+    onAppInstallationUpdated: OnAppInstallationUpdated;
     loadManifest: LoadManifest;
     identity: IdentityChecker;
     fetchIcon: FetchIcon;
+    appTokens: AppTokens;
+    logging: Pick<GhostLogger, 'error'>;
   }) {
+    this.knex = knex;
     this.repository = new AppInstallationsRepository(knex);
-    this.recordAction = recordAction;
+    this.onAppInstallationUpdated = onAppInstallationUpdated;
     this.loadManifest = loadManifest;
     this.identity = identity;
     this.fetchIcon = fetchIcon;
+    this.sessionTokens = new AppSessionTokens({
+      appTokens,
+      findInstallation: (id) => this.currentInstallation(id),
+      logging,
+    });
   }
 
   /** Lists installed apps, suspended ones included. Uninstalled apps aren't listed. */
@@ -176,9 +205,12 @@ export class AppInstallationsService {
    */
   async read(
     id: string,
-    { withHistory = false }: { withHistory?: boolean } = {},
+    { withHistory = false, executor = this.knex }: { withHistory?: boolean; executor?: Knex } = {},
   ): Promise<InstallationWithHistory> {
-    const installation: InstallationWithHistory | undefined = await this.repository.find(id);
+    const installation: InstallationWithHistory | undefined = await this.repository.find(
+      id,
+      executor,
+    );
     if (!installation) {
       throw notFound();
     }
@@ -186,6 +218,15 @@ export class AppInstallationsService {
       installation.history = await this.historyOf(id);
     }
     return installation;
+  }
+
+  /**
+   * What an app token's call is checked against: the installation's status and the scopes of
+   * its approved manifest, read on every call. Null only when there's no such installation; a
+   * failure to read it is an error, never a refusal.
+   */
+  async readAccess(id: string): Promise<InstallationAccess | null> {
+    return (await this.repository.findAccess(id)) ?? null;
   }
 
   /**
@@ -197,10 +238,15 @@ export class AppInstallationsService {
     return this.previewOf(await this.review(loaded, started));
   }
 
-  /** Installs an app after the publisher has reviewed its manifest, as previewed. */
+  /**
+   * Installs an app after the publisher has reviewed its manifest, as previewed. Given a
+   * transaction as `executor` it joins that transaction; given a plain connection it opens its
+   * own.
+   */
   async create(
     context: RequestContext,
     { manifestUrl, digest }: { manifestUrl: string; digest: string },
+    executor: Knex = this.knex,
   ): Promise<Installation> {
     const { loaded } = await this.fetchReviewed(manifestUrl, digest);
     const iconDataUrl = await this.fetchIcon(loaded.manifest.icon).catch(async (error: unknown) => {
@@ -210,13 +256,21 @@ export class AppInstallationsService {
         ? alreadyInstalled(loaded.manifest.id)
         : error;
     });
-    const installation = await this.repository.insert(loaded, iconDataUrl);
-    await this.recordAction({
-      context,
-      event: 'installed',
-      subject: installation.id,
-      details: { primary_name: loaded.manifest.name, app_id: loaded.manifest.id },
-    });
+    const install = () =>
+      ensureTransaction(executor, async (transacting) => {
+        const installation = await this.repository.insert(
+          loaded,
+          iconDataUrl,
+          installChanges(loaded),
+          { transacting },
+        );
+        await this.onAppInstallationUpdated(transacting, context, new AppInstalled(installation));
+        return installation;
+      });
+    // A deadlock rolls back the whole transaction, so only one this command opened can be run
+    // again. A caller's transaction is the caller's to retry.
+    const installation = await (transactionOf(executor) ? install() : retryOnDeadlock(install));
+    await this.keepClientInStepOnCommit(executor, installation.id);
     return installation;
   }
 
@@ -230,13 +284,17 @@ export class AppInstallationsService {
    *
    * Approving the manifest that's already approved, with nothing pending, writes and
    * records nothing.
+   *
+   * Given a transaction as `executor` it joins that transaction; given a plain connection it
+   * opens its own.
    */
   async approve(
     context: RequestContext,
     id: string,
     { manifestUrl, digest, revision }: { manifestUrl: string; digest: string; revision: number },
+    executor: Knex = this.knex,
   ): Promise<Installation> {
-    const current = await this.repository.find(id);
+    const current = await this.repository.find(id, executor);
     if (!current) {
       throw notFound();
     }
@@ -254,43 +312,57 @@ export class AppInstallationsService {
     const write = await this.withIconCopy(
       approvalWrite({ current, pending: await this.pendingManifestOf(current), loaded }),
     ).catch((iconError: unknown) => ({ iconError }));
-    const stored = await this.store(current, write);
+    const stored = await ensureTransaction(executor, async (transacting) => {
+      const outcome = await this.store(current, write, { transacting });
+      if (outcome.status === 'written' && outcome.value) {
+        await this.onAppInstallationUpdated(
+          transacting,
+          context,
+          new AppChangesApproved(current, await this.read(id, { executor: transacting }), {
+            id: outcome.value,
+            name: loaded.manifest.name,
+          }),
+        );
+      }
+      return outcome;
+    });
     if (stored.status === 'uninstalled') {
       throw uninstalled();
     }
     if (stored.status === 'changed') {
       throw await this.changedSinceReview(checked, id);
     }
-    const approved = stored.value;
-    if (approved) {
-      await this.recordAction({
-        context,
-        event: 'changes_approved',
-        subject: id,
-        details: {
-          primary_name: loaded.manifest.name,
-          app_id: loaded.manifest.id,
-          from_manifest_id: current.manifest_id,
-          to_manifest_id: approved,
-        },
-      });
-    }
-    return this.read(id);
+    const approved = await this.read(id, { executor });
+    await this.keepClientInStepOnCommit(executor, id);
+    return approved;
   }
 
   /**
    * Starts an app session when Admin opens an app page. Re-checks the manifest, then
-   * returns the installation, which Admin decides what to show from. Nothing about the
-   * session is stored.
+   * returns the installation, which Admin decides what to show from, and for an active one an
+   * app user token for the staff user. Nothing about the session is stored.
    */
-  async startSession(id: string): Promise<AppSession> {
+  async startSession(id: string, principal: Principal | null): Promise<AppSession> {
+    const staff = this.sessionTokens.staffSessionFor(principal);
     await this.recheck(id);
     const installation = await this.read(id);
+    // A re-check that suspended the app, or an uninstall, ends its tokens
+    await this.sessionTokens.keepClientInStep(id);
     // Uninstalled after the re-check, or during a re-check this session shared.
     if (installation.status === 'uninstalled') {
       throw notInstalled();
     }
-    return { installation };
+    if (installation.status !== 'active') {
+      return { installation, token: null };
+    }
+    // Null when the app was suspended while issuing, which reconciled its client again
+    const token = await this.sessionTokens.issue(installation, staff);
+    return token ? { installation, token } : { installation: await this.read(id), token: null };
+  }
+
+  /** A fresh app user token for a session started at `revision`; see `AppSessionTokens.renew`. */
+  createToken(id: string, revision: number, principal: Principal | null): Promise<AppSessionToken> {
+    return this.sessionTokens.renew(id, revision, principal);
   }
 
   /**
@@ -298,21 +370,43 @@ export class AppInstallationsService {
    *
    * Uninstalling an app that's already uninstalled does nothing, so a repeated request
    * doesn't add a second entry to the history.
+   *
+   * Given a transaction as `executor` it joins that transaction, which mustn't have made a
+   * plain read yet; given a plain connection it opens its own.
    */
-  async uninstall(context: RequestContext, id: string): Promise<void> {
-    const installation = await this.read(id);
+  async uninstall(context: RequestContext, id: string, executor: Knex = this.knex): Promise<void> {
+    await ensureTransaction(executor, async (transacting) => {
+      // Before any plain read, which would fix the snapshot and miss a manifest applied meanwhile.
+      await this.repository.lock(id, { transacting });
+      const installation = await this.read(id, { executor: transacting });
 
-    const ended = await this.repository.uninstall(id);
-    if (!ended) {
+      if (await this.repository.uninstall(id, { transacting })) {
+        await this.onAppInstallationUpdated(
+          transacting,
+          context,
+          new AppUninstalled(installation, await this.read(id, { executor: transacting })),
+        );
+      }
+    });
+    await this.keepClientInStepOnCommit(executor, id);
+  }
+
+  /**
+   * Brings the installation's OAuth client in step with a change once it's committed. A
+   * transaction this command opened has committed by now; a caller's commits later, so the
+   * client follows when it does, and stays as it was if the caller rolls back.
+   */
+  private async keepClientInStepOnCommit(executor: Knex, id: string) {
+    const transaction = transactionOf(executor);
+    if (!transaction) {
+      await this.sessionTokens.keepClientInStep(id);
       return;
     }
-
-    await this.recordAction({
-      context,
-      event: 'uninstalled',
-      subject: id,
-      details: { primary_name: installation.manifest.name, app_id: installation.app_id },
-    });
+    transaction.executionPromise.then(
+      () => this.sessionTokens.keepClientInStep(id),
+      // Rolled back: nothing changed
+      () => {},
+    );
   }
 
   private async historyOf(id: string): Promise<AppInstallationHistoryEntry[]> {
@@ -490,36 +584,41 @@ export class AppInstallationsService {
   private store(
     current: Installation,
     write: ManifestWrite<AddedRow> | { iconError: unknown },
+    { transacting }: { transacting: Knex.Transaction },
   ): Promise<WriteOutcome<string | null>> {
-    return this.repository.whileUnchanged(current, async (locked) => {
-      // Thrown under the lock, so an uninstall or change during the icon fetch wins.
-      if ('iconError' in write) {
-        throw write.iconError;
-      }
-      switch (write.kind) {
-        case 'nothing':
-          return null;
-        case 'approve_existing':
-          await locked.activate(write.manifestId);
-          return write.manifestId;
-        case 'add_approved': {
-          const added = await locked.addManifest(write.row);
-          await locked.activate(added);
-          return added;
+    return this.repository.whileUnchanged(
+      current,
+      async (locked) => {
+        // Thrown under the lock, so an uninstall or change during the icon fetch wins.
+        if ('iconError' in write) {
+          throw write.iconError;
         }
-        case 'add_pending': {
-          const added = await locked.addManifest(write.row);
-          await locked.suspend(added);
-          return added;
+        switch (write.kind) {
+          case 'nothing':
+            return null;
+          case 'approve_existing':
+            await locked.activate(write.manifestId);
+            return write.manifestId;
+          case 'add_approved': {
+            const added = await locked.addManifest(write.row);
+            await locked.activate(added);
+            return added;
+          }
+          case 'add_pending': {
+            const added = await locked.addManifest(write.row);
+            await locked.suspend(added);
+            return added;
+          }
+          default: {
+            const _exhaustive: never = write;
+            throw new errors.InternalServerError({
+              message: `Unhandled manifest write: ${JSON.stringify(_exhaustive)}`,
+            });
+          }
         }
-        default: {
-          const _exhaustive: never = write;
-          throw new errors.InternalServerError({
-            message: `Unhandled manifest write: ${JSON.stringify(_exhaustive)}`,
-          });
-        }
-      }
-    });
+      },
+      { transacting },
+    );
   }
 
   private recheck(id: string): Promise<void> {
@@ -583,7 +682,9 @@ export class AppInstallationsService {
       return this.unavailableUnlessChanged(before, err);
     }
 
-    const stored = await this.store(before, write);
+    const stored = await this.knex.transaction((transacting) =>
+      this.store(before, write, { transacting }),
+    );
     if (stored.status === 'uninstalled') {
       throw notInstalled();
     }

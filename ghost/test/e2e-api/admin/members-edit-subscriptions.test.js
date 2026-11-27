@@ -20,7 +20,7 @@ const testUtils = require('../../utils');
 const assert = require('node:assert/strict');
 const models = require('../../../core/server/models');
 const { stripeMocker } = require('../../utils/e2e-framework-mock-manager');
-const DomainEvents = require('@tryghost/domain-events/lib/DomainEvents');
+const DomainEvents = require('@tryghost/domain-events');
 const settingsHelpers = require('../../../core/server/services/settings-helpers');
 const stripeService = require('../../../core/server/services/stripe');
 const sinon = require('sinon');
@@ -926,6 +926,7 @@ describe('Members API: edit subscriptions', function () {
         type: 'list',
         data: [
           {
+            id: 'si_price2',
             price: price2,
           },
         ],
@@ -996,6 +997,7 @@ describe('Members API: edit subscriptions', function () {
         type: 'list',
         data: [
           {
+            id: 'si_price3',
             price: price3,
           },
         ],

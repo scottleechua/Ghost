@@ -394,6 +394,22 @@ describe('Batch sending tests', function () {
     );
   });
 
+  it('Only sends to paid members through a newsletter for paid members', async function () {
+    const { id } = fixtureManager.get('newsletters', 0);
+    await models.Newsletter.edit({ visibility: 'paid' }, { id });
+    try {
+      await testEmailBatches(
+        {
+          mobiledoc: mobileDocExample, // = same content for free and paid, no need to split batches
+        },
+        null,
+        [{ segment: null, recipients: 2 }],
+      );
+    } finally {
+      await models.Newsletter.edit({ visibility: 'members' }, { id });
+    }
+  });
+
   it('Only sends to members with a specific label', async function () {
     await testEmailBatches(
       {
@@ -402,6 +418,20 @@ describe('Batch sending tests', function () {
       'label:label-1',
       [
         { segment: null, recipients: 1 }, // 1 member was subscribed, one member is not subscribed
+      ],
+    );
+  });
+
+  // Sending puts brackets around a recipient filter before it adds the newsletter's own
+  // clauses, so a filter that arrives in brackets ends up inside two pairs of them
+  it('Only sends to the members a recipient filter in brackets matches', async function () {
+    await testEmailBatches(
+      {
+        mobiledoc: mobileDocExample, // = same content for free and paid, no need to split batches
+      },
+      '(label:label-1)',
+      [
+        { segment: null, recipients: 1 }, // one subscribed member has the label
       ],
     );
   });
